@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,7 @@ func runAdmin(t *testing.T, a *app, method, path string, body any) *httptest.Res
 		b = bytes.NewReader(buf)
 	}
 	req := httptest.NewRequest(method, path, b)
+	req.Host = "127.0.0.1:8766"
 	req.Header.Set("Authorization", "Bearer test-admin-token")
 	result := httptest.NewRecorder()
 	a.adminMux().ServeHTTP(result, req)
@@ -147,12 +150,14 @@ func TestBodyTooLarge(t *testing.T) {
 func TestAuthenticationAndHeaderValidation(t *testing.T) {
 	a := newTestApp()
 	req := httptest.NewRequest("GET", "/api/endpoints", nil)
+	req.Host = "127.0.0.1:8766"
 	rr := httptest.NewRecorder()
 	a.adminMux().ServeHTTP(rr, req)
 	if rr.Code != 401 {
 		t.Fatalf("admin should require token: %d", rr.Code)
 	}
 	req = httptest.NewRequest("GET", "/api/endpoints", nil)
+	req.Host = "127.0.0.1:8766"
 	req.Header.Set("Authorization", "Bearer test-admin-token")
 	req.Header.Set("Origin", "https://evil.example")
 	rr = httptest.NewRecorder()
@@ -168,8 +173,13 @@ func TestAuthenticationAndHeaderValidation(t *testing.T) {
 }
 func TestGlobalMemoryBudget(t *testing.T) {
 	a := newTestApp()
+	now := time.Date(2026, 11, 8, 20, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
 	s := makeSession(t, a, creationRequest{MaxRequests: 100, BodyLimitKiB: 256})
 	for i := 0; i < 60; i++ {
+		if i > 0 && i%maxRequestsPerSecond == 0 {
+			now = now.Add(time.Second)
+		}
 		rr := httptest.NewRecorder()
 		a.publicMux().ServeHTTP(rr, httptest.NewRequest("POST", "/c/"+s.Token, strings.NewReader(strings.Repeat("A", 200*1024))))
 		if rr.Code != 200 {
@@ -189,6 +199,177 @@ func TestAdminOnlyLoopback(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:8766", "[::1]:8766"} {
 		if !isLoopbackAddr(addr) {
 			t.Fatalf("loopback disallowed: %s", addr)
+		}
+	}
+}
+
+func TestRateLimitPerEndpoint(t *testing.T) {
+	a := newTestApp()
+	now := time.Date(2026, 11, 8, 20, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	s := makeSession(t, a, creationRequest{MaxRequests: 100})
+	url := "/c/" + s.Token
+	for i := 0; i < maxRequestsPerSecond; i++ {
+		rr := httptest.NewRecorder()
+		a.publicMux().ServeHTTP(rr, httptest.NewRequest("GET", url, nil))
+		if rr.Code != 200 {
+			t.Fatalf("allowed request %d: %d", i, rr.Code)
+		}
+	}
+	blocked := httptest.NewRecorder()
+	a.publicMux().ServeHTTP(blocked, httptest.NewRequest("GET", url, nil))
+	if blocked.Code != 429 || blocked.Header().Get("Retry-After") != "1" {
+		t.Fatalf("burst: %d, retry-after %s", blocked.Code, blocked.Header().Get("Retry-After"))
+	}
+	now = now.Add(time.Second)
+	allowed := httptest.NewRecorder()
+	a.publicMux().ServeHTTP(allowed, httptest.NewRequest("GET", url, nil))
+	if allowed.Code != 200 {
+		t.Fatalf("next window: %d", allowed.Code)
+	}
+	result := runAdmin(t, a, "GET", "/api/endpoints/"+s.Token, nil)
+	var final session
+	if err := json.Unmarshal(result.Body.Bytes(), &final); err != nil {
+		t.Fatal(err)
+	}
+	if final.Seen != maxRequestsPerSecond+1 {
+		t.Fatalf("quota consumed by 429: %d", final.Seen)
+	}
+}
+
+func TestCaptureConcurrencyLimit(t *testing.T) {
+	a := newTestApp()
+	for i := 0; i < maxConcurrentCaptures; i++ {
+		a.captureSlots <- struct{}{}
+	}
+	rr := httptest.NewRecorder()
+	a.publicMux().ServeHTTP(rr, httptest.NewRequest("GET", "/c/nope", nil))
+	if rr.Code != 503 || rr.Header().Get("Retry-After") != "1" {
+		t.Fatalf("excess concurrency: %d", rr.Code)
+	}
+	<-a.captureSlots
+	recovered := httptest.NewRecorder()
+	a.publicMux().ServeHTTP(recovered, httptest.NewRequest("GET", "/c/nope", nil))
+	if recovered.Code != 404 {
+		t.Fatalf("recovery: %d", recovered.Code)
+	}
+}
+
+func TestAdminHostAndBearerRequired(t *testing.T) {
+	a := newTestApp()
+	cases := []struct {
+		host, auth string
+		want       int
+	}{
+		{"evil.example:8766", "Bearer test-admin-token", 403},
+		{"127.0.0.1:8766", "test-admin-token", 401},
+		{"127.0.0.1:8766", "Bearer test-admin-token", 200},
+		{"localhost:8766", "Bearer test-admin-token", 200},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest("GET", "/api/endpoints", nil)
+		req.Host = tc.host
+		req.Header.Set("Authorization", tc.auth)
+		rr := httptest.NewRecorder()
+		a.adminMux().ServeHTTP(rr, req)
+		if rr.Code != tc.want {
+			t.Fatalf("host %s auth %s: got %d, want %d", tc.host, tc.auth, rr.Code, tc.want)
+		}
+	}
+}
+
+func TestAdminJSONLimitAndObjectShape(t *testing.T) {
+	a := newTestApp()
+	for _, payload := range []string{
+		`null`, `[]`, `{}` + strings.Repeat(" ", maxAdminJSONBytes),
+		`{"name":"x"} {"name":"y"}`,
+		`{"unknown":"x"}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/endpoints", strings.NewReader(payload))
+		req.Host = "127.0.0.1:8766"
+		req.Header.Set("Authorization", "Bearer test-admin-token")
+		rr := httptest.NewRecorder()
+		a.adminMux().ServeHTTP(rr, req)
+		if rr.Code != 400 {
+			t.Fatalf("payload (%d bytes): got %d", len(payload), rr.Code)
+		}
+	}
+}
+
+func TestResponseHeaderRejectsControls(t *testing.T) {
+	a := newTestApp()
+	s := makeSession(t, a, creationRequest{})
+	for _, value := range []string{"hello\nworld", "\x01abc", "abc\x7f"} {
+		bad := updateRequest{Response: responseSpec{Status: 200, Headers: map[string]string{"X-Test": value}}}
+		rr := runAdmin(t, a, "PUT", "/api/endpoints/"+s.Token, bad)
+		if rr.Code != 400 {
+			t.Fatalf("accepted header value %q", value)
+		}
+	}
+}
+
+func TestStoredTokenRequiresPrivateRegularFile(t *testing.T) {
+	t.Setenv("HOOKLOOM_ADMIN_TOKEN", "")
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	token, tokenPath, err := loadAdminToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) < 32 {
+		t.Fatal("generated token too short")
+	}
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode %o", info.Mode().Perm())
+	}
+	if err := os.Chmod(tokenPath, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadAdminToken(); err == nil {
+		t.Fatal("world-readable token was accepted")
+	}
+	if err := os.Remove(tokenPath); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(configHome, "other-file")
+	if err := os.WriteFile(target, []byte(token), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, tokenPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadAdminToken(); err == nil {
+		t.Fatal("token symlink was accepted")
+	}
+}
+
+func TestQueryValuesCountTowardBudget(t *testing.T) {
+	a := newTestApp()
+	s := makeSession(t, a, creationRequest{})
+	query := strings.Repeat("q", 9000)
+	rr := httptest.NewRecorder()
+	a.publicMux().ServeHTTP(rr, httptest.NewRequest("GET", "/c/"+s.Token+"/?k="+query, nil))
+	if rr.Code != 200 {
+		t.Fatalf("request: %d", rr.Code)
+	}
+	if a.usedBytes < len(query) {
+		t.Fatalf("query missing from accounting: %d", a.usedBytes)
+	}
+}
+
+func TestCaptureBaseURLValidation(t *testing.T) {
+	for _, good := range []string{"http://127.0.0.1:8765", "https://hooks.example.test", "https://[::1]:8765"} {
+		if !validCaptureBase(good) {
+			t.Fatalf("rejected URL: %s", good)
+		}
+	}
+	for _, bad := range []string{"http://", "https://bad.test/path", "https://bad.test?query=1", "http://person:pass@bad.test", "ftp://bad.test", "http://bad.test/#fragment", "http://bad.test:invalid"} {
+		if validCaptureBase(bad) {
+			t.Fatalf("accepted URL: %s", bad)
 		}
 	}
 }
