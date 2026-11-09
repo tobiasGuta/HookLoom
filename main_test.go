@@ -463,3 +463,28 @@ func TestValidateExactPathRule(t *testing.T) {
 		})
 	}
 }
+
+func TestRuleConflictAnalyzerAsset(t *testing.T) {
+	a := newTestApp()
+	req := httptest.NewRequest(http.MethodGet, "/rule_conflicts.js", nil)
+	req.Host = "127.0.0.1:8766"
+	rr := httptest.NewRecorder()
+	a.adminMux().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "findShadowedRules") {
+		t.Fatalf("rule analyzer unavailable: %d", rr.Code)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "application/javascript; charset=utf-8" {
+		t.Fatalf("wrong content type: %q", got)
+	}
+	for _, name := range []string{"Content-Security-Policy", "Cache-Control", "X-Content-Type-Options"} {
+		if rr.Header().Get(name) == "" {
+			t.Fatalf("security header missing: %s", name)
+		}
+	}
+	req.Host = "attacker.example:8766"
+	bad := httptest.NewRecorder()
+	a.adminMux().ServeHTTP(bad, req)
+	if bad.Code != http.StatusForbidden {
+		t.Fatalf("unexpected Host accepted: %d", bad.Code)
+	}
+}
