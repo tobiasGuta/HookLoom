@@ -3,43 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HookLoom — Ephemeral HTTP Lab</title>
+  <meta name="theme-color" content="#f4f7fb">
+  <title>HookLoom — HTTP Workspace</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <div><span class="brandmark">◈</span><strong>HookLoom</strong> <span class="subtitle">Ephemeral HTTP lab</span></div>
-    <div class="privacy">Private administration · No database</div>
+    <div class="brand"><span class="brandmark" aria-hidden="true">H</span><strong>HookLoom</strong><span class="brand-separator" aria-hidden="true"></span><span class="brand-subtitle">HTTP Workspace</span></div>
+    <div class="topbar-actions"><span class="status-dot">Local workspace</span><span class="topbar-separator" aria-hidden="true"></span><button type="button" id="themeToggle" class="subtle small-btn" aria-label="Switch color theme">Dark mode</button><button type="button" id="lock" class="subtle small-btn hidden" title="Lock administrative panel">Lock workspace</button></div>
   </header>
   <main>
-    <section id="loginPane" class="card auth">
-      <p class="eyebrow">LOCAL ADMIN PANEL</p>
-      <h1>Unlock your request inspector</h1>
-      <p>Get your admin token from <code>~/.config/hookloom/admin.token</code> on the host. Never paste it into a CTF challenge.</p>
-      <label for="adminToken">Admin token</label>
-      <input type="password" id="adminToken" autocomplete="off" placeholder="Paste the private admin token">
-      <button id="unlock">Unlock dashboard</button>
-      <p class="small">The token stays in browser memory only and disappears on reload. The control panel is bound to loopback.</p>
+    <section id="loginPane" class="auth-card">
+      <span class="overline">PRIVATE ADMINISTRATION</span>
+      <h1>Welcome to HookLoom</h1>
+      <p>Capture HTTP requests and configure temporary responses from one organized workspace.</p>
+      <label for="adminToken">Admin access token</label>
+      <input type="password" id="adminToken" autocomplete="off" spellcheck="false" placeholder="Paste your local admin token">
+      <button type="button" id="unlock" class="primary full">Unlock workspace</button>
+      <p class="help-text">Find your token at <code>~/.config/hookloom/admin.token</code>. It stays in browser memory and is cleared on reload.</p>
     </section>
+
     <div id="workspace" class="hidden">
-      <div class="pageheading"><div><p class="eyebrow">AUTHORIZED CTF TESTING</p><h1>Temporary capture endpoints</h1><p>Create a short-lived request inbox or a programmable mock HTTP response. Data is held only in RAM.</p></div><button id="lock" class="ghost">Lock panel</button></div>
-      <section class="card creation">
-        <h2>New endpoint</h2>
-        <div class="creategrid">
-          <label>Name<input id="name" value="CTF challenge" maxlength="60"></label>
-          <label>Expires after<select id="ttl"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option></select></label>
-          <label>Max requests<select id="requestLimit"><option value="10">10</option><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
-          <label>Max body<select id="bodyLimit"><option value="8">8 KiB</option><option value="32">32 KiB</option><option value="64" selected>64 KiB</option><option value="256">256 KiB</option></select></label>
-          <button id="create">+ Create endpoint</button>
-        </div>
-      </section>
+      <div class="workspace-heading">
+        <div class="heading-copy"><span class="overline">WORKSPACE</span><h1>Requests &amp; responses</h1><p>Manage short-lived endpoints, response behavior, and inspect incoming traffic.</p></div>
+        <section class="workspace-summary" aria-label="Selected endpoint summary">
+          <div class="summary-item summary-capture"><span class="summary-icon" aria-hidden="true">▱</span><div><span class="summary-label">Selected capture URL</span><span class="summary-value summary-url" id="summaryUrl">Select an endpoint</span></div><button type="button" id="summaryCopy" class="icon-btn" title="Copy selected capture URL" aria-label="Copy selected capture URL" disabled>⧉</button></div>
+          <div class="summary-item"><span class="summary-icon" aria-hidden="true">◷</span><div><span class="summary-label">Expires in</span><strong id="summaryExpires">—</strong></div></div>
+          <div class="summary-item"><span class="summary-icon" aria-hidden="true">▥</span><div><span class="summary-label">Requests received</span><strong id="summaryRequests">0</strong></div></div>
+        </section>
+      </div>
+
       <div class="layout">
-        <aside class="card sidebar"><div class="sectionhead"><h2>Endpoints</h2><button id="refresh" class="ghost compact">Refresh</button></div><div id="sessionList" class="sessionlist"><p class="muted">No endpoints yet.</p></div></aside>
-        <div id="sessionPane" class="card details"><p class="muted">Create an endpoint or select one from the list.</p></div>
+        <aside class="pane endpoint-pane" aria-label="Endpoints">
+          <div class="pane-head"><div><h2><span class="pane-icon" aria-hidden="true">▱</span> Endpoints <span id="endpointCount" class="count">0</span></h2><p>Your temporary URLs</p></div><button type="button" id="openCreate" class="primary small-btn">+ New endpoint</button></div>
+          <div class="sidebar-controls"><label for="endpointSearch" class="sr-only">Search endpoints</label><input id="endpointSearch" type="search" placeholder="Search endpoints…" autocomplete="off"></div>
+          <div id="sessionList" class="session-list"><p class="empty-muted">No endpoints yet.</p></div>
+          <div class="sidebar-footer">In-memory only · Automatically expires</div>
+        </aside>
+
+        <section id="sessionPane" class="pane editor-pane" aria-label="Endpoint configuration">
+          <div class="blank-state"><div class="blank-icon" aria-hidden="true">↗</div><h2>Ready when you are</h2><p>Create an endpoint to configure a response and inspect incoming requests.</p><button type="button" id="emptyCreate" class="primary">Create endpoint</button></div>
+        </section>
+
+        <aside class="inspector-pane" aria-label="Request inspector">
+          <section class="pane activity-card" aria-label="Request activity">
+            <div class="pane-head"><div><h2><span class="pane-icon" aria-hidden="true">⌁</span> Request activity <span id="captureCount" class="count">0</span></h2><p>Incoming requests to this endpoint</p></div><button type="button" id="refresh" class="subtle small-btn" title="Refresh requests">⟳ Refresh</button></div>
+            <div class="activity-controls"><label for="requestSearch" class="sr-only">Search captured requests by path or query</label><input id="requestSearch" type="search" placeholder="Search requests…" autocomplete="off"><label for="requestMethod" class="sr-only">Filter requests by HTTP method</label><select id="requestMethod" aria-label="HTTP method filter"><option value="">All methods</option><option value="GET">GET</option><option value="POST">POST</option><option value="PUT">PUT</option><option value="PATCH">PATCH</option><option value="DELETE">DELETE</option><option value="HEAD">HEAD</option><option value="OPTIONS">OPTIONS</option><option value="OTHER">Other</option></select></div>
+            <div class="activity-table-head" aria-hidden="true"><span>Method</span><span>Path</span><span>Body size</span><span>Time</span></div>
+            <div id="requestList" class="request-list"><div class="empty-muted">Incoming requests will appear here.</div></div>
+          </section>
+          <section id="requestDetail" class="pane request-detail" aria-label="Request details"><div class="empty-muted">Select a request to inspect its details.</div></section>
+        </aside>
       </div>
       <p id="notice" role="status" aria-live="polite"></p>
     </div>
   </main>
+
+  <dialog id="createDialog" aria-labelledby="createTitle">
+    <form id="createForm" class="dialog-form">
+      <div class="dialog-head"><div><span class="overline">NEW ENDPOINT</span><h2 id="createTitle">Create temporary URL</h2><p>Choose an expiration and request limit for your test.</p></div><button type="button" id="closeCreate" class="icon-btn" aria-label="Close dialog">×</button></div>
+      <label for="name">Endpoint name</label><input id="name" value="CTF challenge" maxlength="60" required>
+      <div class="form-grid"><div><label for="ttl">Expires after</label><select id="ttl"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option></select></div><div><label for="requestLimit">Max requests</label><select id="requestLimit"><option value="10">10</option><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></div><div><label for="bodyLimit">Request body limit</label><select id="bodyLimit"><option value="8">8 KiB</option><option value="32">32 KiB</option><option value="64" selected>64 KiB</option><option value="256">256 KiB</option></select></div></div>
+      <p id="createError" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="cancelCreate" class="subtle">Cancel</button><button id="create" class="primary" type="submit">Create endpoint</button></div>
+    </form>
+  </dialog>
 </body>
 </html>
