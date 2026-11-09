@@ -4,6 +4,7 @@ let adminToken='';
 let selected='';
 let selectedEvent='';
 let requestTab='overview';
+let centerTab='overview';
 let editing=false;
 let currentSession=null;
 let renderedToken='';
@@ -25,6 +26,7 @@ function fmtDate(v){return new Date(v).toLocaleString()}
 function fmtTime(v){return new Date(v).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}
 function fmtSize(bytes){return bytes>=1024?(bytes/1024).toFixed(bytes>=10240?0:1)+' KiB':bytes+' B'}
 function remaining(v){const sec=Math.max(0,Math.floor((new Date(v).getTime()-Date.now())/1000));return sec>60?Math.ceil(sec/60)+' min remaining':sec+' sec remaining'}
+function compactRemaining(v){const sec=Math.max(0,Math.floor((new Date(v).getTime()-Date.now())/1000));return sec>60?Math.ceil(sec/60)+' min':sec+' sec'}
 function setTheme(theme){document.documentElement.dataset.theme=theme;$('themeToggle').textContent=theme==='dark'?'Light mode':'Dark mode';try{localStorage.setItem('hookloom-theme',theme)}catch{}}
 (function initTheme(){let theme='light';try{theme=localStorage.getItem('hookloom-theme')||'light'}catch{}setTheme(theme==='dark'?'dark':'light')})();
 $('themeToggle').addEventListener('click',()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark'));
@@ -40,7 +42,7 @@ function discardPrompt(){return !editing||confirm('Discard your unsaved response
 async function login(){
  adminToken=$('adminToken').value.trim();$('adminToken').value='';
  if(!adminToken)return;
- try{await load();$('loginPane').classList.add('hidden');$('workspace').classList.remove('hidden')}
+ try{await load();$('loginPane').classList.add('hidden');$('workspace').classList.remove('hidden');$('lock').classList.remove('hidden')}
  catch(e){adminToken='';alert('Authentication failed: '+e.message)}
 }
 $('unlock').addEventListener('click',login);
@@ -49,7 +51,7 @@ $('lock').addEventListener('click',()=>{
  if(!discardPrompt())return;
  adminToken='';selected='';selectedEvent='';currentSession=null;renderedToken='';editing=false;
  $('requestSearch').value='';$('requestMethod').value='';
- $('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');
+ $('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');$('lock').classList.add('hidden');
  $('sessionPane').replaceChildren();$('requestList').replaceChildren();$('requestDetail').replaceChildren();
 });
 function openCreate(){if(!discardPrompt())return;$('createError').textContent='';$('createDialog').showModal();$('name').focus()}
@@ -61,7 +63,7 @@ $('createForm').addEventListener('submit',async e=>{
  e.preventDefault();$('createError').textContent='';$('create').disabled=true;
  try{
   const s=await api('endpoints',{method:'POST',body:JSON.stringify({name:$('name').value,ttlMinutes:Number($('ttl').value),maxRequests:Number($('requestLimit').value),bodyLimitKiB:Number($('bodyLimit').value)})});
-  selected=s.token;selectedEvent='';editing=false;$('createDialog').close();
+  selected=s.token;selectedEvent='';centerTab='overview';editing=false;$('createDialog').close();
   await load();notify('Endpoint created. Copy its URL to test incoming requests.');
  }catch(err){$('createError').textContent=err.message}
  finally{$('create').disabled=false}
@@ -80,6 +82,7 @@ async function load({preserveEditor=false}={}){
   if(!selected||!all.some(s=>s.token===selected)){selected=all[0].token;selectedEvent='';editing=false;preserveEditor=false}
   const data=await api('endpoints/'+selected);currentSession=data;
   renderSidebar(all);
+  renderSummary(data);
   if(renderedToken!==selected || (!preserveEditor && !editing)){renderSession(data);renderedToken=selected}
   renderInspector(data);
  }finally{refreshInProgress=false}
@@ -97,12 +100,24 @@ function renderSidebar(sessions){
   b.addEventListener('click',async()=>{
    if(s.token===selected)return;
    if(!discardPrompt())return;
-   selected=s.token;selectedEvent='';requestTab='overview';editing=false;
+   selected=s.token;selectedEvent='';requestTab='overview';centerTab='overview';editing=false;
    try{await load()}catch(e){notify(e.message)}
   });list.append(b);
  }
 }
+function renderSummary(s){
+ $('summaryUrl').textContent=s.url;
+ $('summaryUrl').title=s.url;
+ $('summaryExpires').textContent=compactRemaining(s.expiresAt);
+ $('summaryRequests').textContent=String(s.seen);
+ $('summaryCopy').disabled=false;
+}
+$('summaryCopy').addEventListener('click',()=>{
+ if(!currentSession)return;
+ navigator.clipboard.writeText(currentSession.url).then(()=>notify('Capture URL copied.')).catch(()=>notify('Could not copy. Select the URL manually.'));
+});
 function renderEmpty(){
+ $('summaryUrl').textContent='Select an endpoint';$('summaryUrl').title='';$('summaryExpires').textContent='—';$('summaryRequests').textContent='0';$('summaryCopy').disabled=true;
  const root=$('sessionPane');root.replaceChildren();
  const blank=el('div','blank-state');blank.append(el('div','blank-icon','↗'),el('h2','','Ready when you are'),el('p','','Create an endpoint to configure a response and inspect incoming requests.'));
  blank.append(button('Create endpoint','primary',openCreate));root.append(blank);
@@ -115,13 +130,13 @@ function trackedField(label,value,id,type='text'){
  if(type!=='textarea'){field.type=type;if(type==='number'){field.step='1'}}
  field.value=value;field.addEventListener('input',markEdited);wrapper.append(l,field);return wrapper;
 }
-function markEdited(){editing=true;const mark=$('unsaved');if(mark)mark.textContent='Unsaved changes'}
+function markEdited(){editing=true;const mark=$('unsaved');if(mark){mark.textContent='Unsaved changes';mark.classList.add('pending')}}
 function addHeaderRow(name='',value=''){
  const row=el('div','header-row');row.className='header-row';
  const key=el('input');key.type='text';key.placeholder='Header name';key.value=name;key.setAttribute('aria-label','Response header name');
  const val=el('input');val.type='text';val.placeholder='Value';val.value=value;val.setAttribute('aria-label','Response header value');
  key.addEventListener('input',markEdited);val.addEventListener('input',markEdited);
- row.append(key,val,button('×','subtle',()=>{row.remove();markEdited()}));
+ const remove=button('×','icon-btn',()=>{row.remove();markEdited()});remove.setAttribute('aria-label','Remove response header');row.append(key,val,remove);
  $('headerRows').append(row);
 }
 function replaceHeaderRows(headers){$('headerRows').replaceChildren();for(const [key,value] of Object.entries(headers||{}))addHeaderRow(key,value)}
@@ -138,34 +153,79 @@ function readHeaders(){
 }
 function applyPreset(spec,label){
  $('responseStatus').value=String(spec.status);$('responseDelay').value='0';$('responseBody').value=spec.body;
- replaceHeaderRows(spec.headers);markEdited();notify(label+' preset loaded. Save changes to activate it.');
+ replaceHeaderRows(spec.headers);$('editorLanguage').textContent=guessLanguage(spec.headers);markEdited();updateLineNumbers();selectPreset(label);notify(label+' preset loaded. Save changes to activate it.');
 }
 function renderSession(s){
  const root=$('sessionPane');root.replaceChildren();
- const head=el('div','detail-title-row');head.append(el('h2','',s.name),el('span','pill',remaining(s.expiresAt)));root.append(head);
+ const head=el('div','detail-title-row');const nameWrap=el('div','endpoint-heading');nameWrap.append(el('span','endpoint-icon','⬡'),el('h2','',s.name));head.append(nameWrap,el('span','active-status','● Active'));root.append(head);
+ const url=el('div','endpoint-url');url.append(el('code','',s.url));
+ const copy=button('⧉','icon-btn',()=>navigator.clipboard.writeText(s.url).then(()=>notify('Capture URL copied.')).catch(()=>notify('Copy failed. Select the URL manually.')));copy.title='Copy capture URL';copy.setAttribute('aria-label','Copy capture URL');
+ const open=button('↗','icon-btn',()=>window.open(s.url,'_blank','noopener,noreferrer'));open.title='Open capture URL';open.setAttribute('aria-label','Open capture URL in new tab');
+ url.append(copy,open);root.append(url);
  const stats=el('div','metric-grid');
- for(const [label,value,detail] of [['Requests',s.seen+' / '+s.maxRequests,'received'],['Stored',String(s.captures.length),'captures'],['Body limit',s.bodyLimitKiB+' KiB','per request']]){
-  const item=el('div','metric');item.append(el('span','metric-label',label),el('strong','metric-value',value),el('span','metric-detail',detail));stats.append(item);
+ for(const [icon,label,value] of [['⇄','Requests received',String(s.seen)],['◷','Time remaining',compactRemaining(s.expiresAt)],['▤','Body limit',s.bodyLimitKiB+' KiB']]){
+  const item=el('div','metric');item.append(el('span','metric-icon',icon));const text=el('div','metric-text');text.append(el('span','metric-label',label),el('strong','metric-value',value));item.append(text);stats.append(item);
  }
  root.append(stats);
- root.append(el('span','field-label','Capture URL'));
- const url=el('div','endpoint-url');url.append(el('code','',s.url),button('Copy','subtle small-btn',()=>navigator.clipboard.writeText(s.url).then(()=>notify('Capture URL copied.')).catch(()=>notify('Copy failed: copy the URL manually.'))));root.append(url);
- const toolbar=el('div','actions-row');toolbar.append(button('Export requests','subtle small-btn',()=>exportSession(s.token)),button('Delete endpoint','danger small-btn',()=>deleteSession(s.token)));root.append(toolbar);
- root.append(el('hr','section-divider'));
- const section=el('div','section-title');section.append(el('h3','','Response builder'),el('span','help-inline','Applies to future requests'));root.append(section);
- const presetHelp=el('p','help-inline','Start from a preset, then customize and save.');root.append(presetHelp);
- const bar=el('div','preset-bar');for(const [label,spec] of presets)bar.append(button(label,'',()=>applyPreset(spec,label)));root.append(bar);
- const grid=el('div','form-grid');grid.append(trackedField('HTTP status',String(s.response.status),'responseStatus','number'),trackedField('Delay (ms, up to 2000)',String(s.response.delayMs),'responseDelay','number'));root.append(grid);
+ const toolbar=el('div','actions-row');toolbar.append(button('⇩  Export requests','subtle small-btn',()=>exportSession(s.token)),button('♧  Delete endpoint','danger small-btn',()=>deleteSession(s.token)));root.append(toolbar);
+ const nav=el('nav','center-tabs');nav.setAttribute('aria-label','Endpoint workspace sections');
+ for(const [id,label,icon] of [['overview','Overview','⌂'],['response','Response','</>'],['rules','Rules','▱'],['requests','Requests','▥']]){
+  const title=label+(id==='requests'?'  '+s.captures.length:'');
+  const b=button(icon+'  '+title,'center-tab'+(centerTab===id?' active':''),()=>setCenterTab(id));b.dataset.tab=id;b.setAttribute('aria-current',String(centerTab===id));nav.append(b);
+ }
+ root.append(nav);
+ const config=el('section','config-panel');config.id='responsePanel';root.append(config);config.append(el('h3','','Response configuration'),el('p','help-inline','Choose a preset or customize the response.'));
+ const bar=el('div','preset-bar');bar.id='presetBar';for(const [label,spec] of presets){const b=button(label,'preset-button',()=>applyPreset(spec,label));b.dataset.preset=label;bar.append(b)}config.append(bar);
+ const grid=el('div','form-grid');grid.append(trackedField('HTTP status',String(s.response.status),'responseStatus','number'),trackedField('Response delay (ms)',String(s.response.delayMs),'responseDelay','number'));config.append(grid);
  $('responseStatus').min='200';$('responseStatus').max='599';$('responseDelay').min='0';$('responseDelay').max='2000';
  const headers=el('div','field-group');headers.append(el('label','','Response headers'));
- const rows=el('div');rows.id='headerRows';headers.append(rows);headers.append(button('+ Add header','secondary-link',()=>{addHeaderRow();markEdited()}));root.append(headers);replaceHeaderRows(s.response.headers);
- const body=el('div','field-group');body.append(trackedField('Response body (exact text)',s.response.body||'','responseBody','textarea'));root.append(body);
- const rules=el('details','rules-box');const summary=el('summary','',`Conditional rules · ${s.rules?.length||0} configured`);rules.append(summary);
- const rulesContent=el('div','rules-content');rulesContent.append(el('p','','Advanced: provide a JSON array of first-match rules. A matching rule overrides the default response.'));
- rulesContent.append(trackedField('Rules JSON',JSON.stringify(s.rules||[],null,2),'rulesJSON','textarea'));rules.append(rulesContent);if(s.rules?.length)rules.open=true;root.append(rules);
- const save=el('div','save-row');const unsaved=el('span','unsaved','');unsaved.id='unsaved';save.append(unsaved,button('Save response','primary',()=>saveSettings(s.token)));root.append(save);
+ const headerFrame=el('div','header-table');const headerTitle=el('div','header-table-head');headerTitle.append(el('span','','Name'),el('span','','Value'),el('span','sr-only','Remove'));headerFrame.append(headerTitle);
+ const rows=el('div');rows.id='headerRows';headerFrame.append(rows);headers.append(headerFrame);headers.append(button('+  Add header','secondary-link',()=>{addHeaderRow();markEdited()}));config.append(headers);replaceHeaderRows(s.response.headers);
+ const body=el('div','field-group');body.append(el('label','','Response body'));
+ const editor=el('div','code-editor');const editorBar=el('div','editor-toolbar');const language=el('span','language-chip',guessLanguage(s.response.headers));language.id='editorLanguage';const format=button('✧  Format','format-button',formatResponseBody);format.title='Pretty-print valid JSON';editorBar.append(language,format);editor.append(editorBar);
+ const codeInput=el('div','code-input');const nums=el('div','code-lines','1');nums.id='editorLines';nums.setAttribute('aria-hidden','true');const textarea=el('textarea');textarea.id='responseBody';textarea.value=s.response.body||'';textarea.spellcheck=false;textarea.setAttribute('aria-label','Response body (exact text)');textarea.addEventListener('input',()=>{markEdited();updateLineNumbers()});textarea.addEventListener('scroll',()=>{nums.scrollTop=textarea.scrollTop});codeInput.append(nums,textarea);editor.append(codeInput);body.append(editor);config.append(body);
+ const preview=el('section','response-preview-panel hidden');preview.id='responsePreviewPanel';preview.append(el('h3','','Response preview'),el('p','help-inline','A preview of the configured response. The server also adds standard security headers.'));
+ const pre=el('pre','response-preview');pre.id='previewHTTP';preview.append(pre,button('←  Edit response','subtle',()=>setCenterTab('overview')));root.append(preview);
+ const rules=el('section','rules-panel hidden');rules.id='rulesPanel';rules.append(el('h3','','Conditional response rules'),el('p','help-inline','Advanced: first matching rule takes priority over the default response. JSON is supported.'));
+ rules.append(trackedField('Rules (JSON array)',JSON.stringify(s.rules||[],null,2),'rulesJSON','textarea'));rules.append(el('p','help-inline','Rules are evaluated in order. Keep the array empty to use the default response for every request.'));root.append(rules);
+ const captured=el('section','captured-panel hidden');captured.id='capturedPanel';captured.append(el('h3','','Captured requests'),el('p','help-inline','Select a request to inspect its contents in the panel on the right.'));
+ const captures=el('div','capture-overview');
+ for(const ev of [...s.captures].reverse().slice(0,20)){
+  const b=button(ev.method+'  '+(ev.path||'/')+'   ·   '+fmtTime(ev.at),'capture-overview-item',()=>{selectedEvent=ev.id;requestTab='overview';renderInspector(currentSession);$('requestDetail').scrollIntoView({block:'nearest',behavior:'smooth'})});captures.append(b);
+ }
+ if(!s.captures.length)captures.append(el('p','empty-muted','No requests captured yet. Send a request to your capture URL.'));captured.append(captures);root.append(captured);
+ const footer=el('div','save-row');const saved=el('span','saved-status','✓  Saved  ·  Response settings up to date');saved.id='unsaved';footer.append(saved,button('▣  Save changes','primary save-button',()=>saveSettings(s.token)));root.append(footer);
+ updateLineNumbers();selectPreset(null);setCenterTab(centerTab);
+}
+function guessLanguage(headers){const type=Object.entries(headers||{}).find(([k])=>k.toLowerCase()==='content-type')?.[1]||'';return /json/i.test(type)?'JSON':/html/i.test(type)?'HTML':'TEXT'}
+function updateLineNumbers(){const body=$('responseBody'),nums=$('editorLines');if(!body||!nums)return;const length=body.value.split('\n').length;nums.textContent=Array.from({length:Math.min(length,1500)},(_,i)=>i+1).join('\n');}
+function selectPreset(label){const bar=$('presetBar');if(!bar)return;for(const b of bar.querySelectorAll('button'))b.classList.toggle('active',b.dataset.preset===label);}
+function formatResponseBody(){const body=$('responseBody');try{body.value=JSON.stringify(JSON.parse(body.value),null,2);$('editorLanguage').textContent='JSON';updateLineNumbers();markEdited();notify('JSON formatted. Save changes to apply.')}catch{notify('Only valid JSON can be formatted. Original body was kept.')}}
+function renderResponsePreview(){
+ const preview=$('previewHTTP');if(!preview)return;
+ try{
+  const status=$('responseStatus').value;
+  const headers=readHeaders();const body=$('responseBody').value;
+  preview.textContent='HTTP/1.1 '+status+'\n'+Object.entries(headers).map(([k,v])=>k+': '+v).join('\n')+'\n\n'+body;
+ }catch(e){preview.textContent='Complete the response header fields to see a preview. '+e.message}
+}
+function renderCapturesSummary(s){
+ const root=document.querySelector('#capturedPanel .capture-overview');if(!root)return;
+ root.replaceChildren();
+ for(const ev of [...s.captures].reverse().slice(0,20)){
+  const b=button(ev.method+'  '+(ev.path||'/')+'   ·   '+fmtTime(ev.at),'capture-overview-item',()=>{selectedEvent=ev.id;requestTab='overview';renderInspector(currentSession);$('requestDetail').scrollIntoView({block:'nearest',behavior:'smooth'})});root.append(b);
+ }
+ if(!s.captures.length)root.append(el('p','empty-muted','No requests captured yet. Send a request to your capture URL.'));
+ const counter=document.querySelector('.center-tab[data-tab="requests"]');if(counter)counter.textContent='▥  Requests  '+s.captures.length;
+}
+function setCenterTab(tab){centerTab=tab;
+ const config=$('responsePanel'),preview=$('responsePreviewPanel'),rules=$('rulesPanel'),captured=$('capturedPanel');if(!config||!rules||!captured||!preview)return;
+ config.classList.toggle('hidden',tab!=='overview');preview.classList.toggle('hidden',tab!=='response');rules.classList.toggle('hidden',tab!=='rules');captured.classList.toggle('hidden',tab!=='requests');
+ if(tab==='response')renderResponsePreview();
+ for(const b of document.querySelectorAll('.center-tab')){const active=b.dataset.tab===tab;b.classList.toggle('active',active);b.setAttribute('aria-current',String(active));}
 }
 function renderInspector(s){
+ renderCapturesSummary(s);
  const all=[...s.captures].reverse();
  $('captureCount').textContent=String(all.length);
  const list=$('requestList');list.replaceChildren();
@@ -182,15 +242,15 @@ function renderInspector(s){
  if(!selectedEvent||!filtered.some(ev=>ev.id===selectedEvent)){selectedEvent=filtered[0].id;requestTab='overview'}
  for(const event of filtered){
   const b=el('button','request-button'+(selectedEvent===event.id?' active':''));b.type='button';b.setAttribute('aria-pressed',String(selectedEvent===event.id));
-  const line=el('div','request-main');const m=el('span','method',event.method);m.dataset.method=event.method;line.append(m,el('span','request-path',event.path||'/'));b.append(line);
-  const meta=el('div','request-extra');meta.append(el('span','',fmtTime(event.at)),el('span','',fmtSize(event.bodyBytes||0)));b.append(meta);
+  const m=el('span','method',event.method);m.dataset.method=event.method;
+  b.append(m,el('span','request-path',event.path||'/'),el('span','request-size',fmtSize(event.bodyBytes||0)),el('span','request-time',fmtTime(event.at)));
   b.addEventListener('click',()=>{selectedEvent=event.id;requestTab='overview';renderInspector(s)});list.append(b);
  }
  renderRequestDetail(filtered.find(item=>item.id===selectedEvent));
 }
 function renderRequestDetail(ev){
  const root=$('requestDetail');root.replaceChildren();
- root.append(el('h3','','Request details'),el('p','',ev.method+' '+(ev.path||'/')+' · '+fmtDate(ev.at)));
+ const h=el('h3','','▤  Request details');root.append(h,el('p','',ev.method+' '+(ev.path||'/')+' · '+fmtDate(ev.at)));
  const tabs=el('div','request-tabs');tabs.setAttribute('role','tablist');
  const content=el('div','request-content');
  for(const [id,label] of [['overview','Overview'],['headers','Headers'],['query','Query'],['body','Body'],['raw','Raw']]){
