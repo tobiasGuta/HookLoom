@@ -59,6 +59,7 @@ type responseSpec struct {
 type matchSpec struct {
 	Method       string `json:"method,omitempty"`
 	PathPrefix   string `json:"pathPrefix,omitempty"`
+	PathExact    string `json:"pathExact,omitempty"`
 	QueryKey     string `json:"queryKey,omitempty"`
 	QueryValue   string `json:"queryValue,omitempty"`
 	HeaderKey    string `json:"headerKey,omitempty"`
@@ -183,7 +184,7 @@ func validateRules(rules []rule) error {
 			return fmt.Errorf("rule %d: %w", i+1, err)
 		}
 		m := r.Match
-		if len(m.PathPrefix) > 200 || len(m.BodyContains) > 512 || len(m.QueryKey) > 128 || len(m.QueryValue) > 512 || len(m.HeaderKey) > 128 || len(m.HeaderValue) > 512 {
+		if len(m.PathPrefix) > 200 || len(m.PathExact) > 200 || len(m.BodyContains) > 512 || len(m.QueryKey) > 128 || len(m.QueryValue) > 512 || len(m.HeaderKey) > 128 || len(m.HeaderValue) > 512 {
 			return fmt.Errorf("rule %d: match value too long", i+1)
 		}
 		if m.Method != "" && (!headerKeyRE.MatchString(m.Method) || strings.ToUpper(m.Method) != m.Method) {
@@ -191,6 +192,12 @@ func validateRules(rules []rule) error {
 		}
 		if m.PathPrefix != "" && !strings.HasPrefix(m.PathPrefix, "/") {
 			return fmt.Errorf("rule %d: pathPrefix must start with /", i+1)
+		}
+		if m.PathExact != "" && !strings.HasPrefix(m.PathExact, "/") {
+			return fmt.Errorf("rule %d: pathExact must start with /", i+1)
+		}
+		if m.PathPrefix != "" && m.PathExact != "" {
+			return fmt.Errorf("rule %d: use either pathPrefix or pathExact, not both", i+1)
 		}
 		if m.HeaderKey != "" && !headerKeyRE.MatchString(m.HeaderKey) {
 			return fmt.Errorf("rule %d: invalid header key", i+1)
@@ -204,6 +211,9 @@ func matchRule(m matchSpec, r *http.Request, relPath string, body []byte) bool {
 		return false
 	}
 	if m.PathPrefix != "" && !strings.HasPrefix(relPath, m.PathPrefix) {
+		return false
+	}
+	if m.PathExact != "" && relPath != m.PathExact {
 		return false
 	}
 	if m.QueryKey != "" {

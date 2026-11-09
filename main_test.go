@@ -373,3 +373,93 @@ func TestCaptureBaseURLValidation(t *testing.T) {
 		}
 	}
 }
+
+// TestExactPathMatchesOnlyThatPath verifies that pathExact is a case-sensitive,
+// full-path comparison, while legacy pathPrefix retains its original behavior.
+func TestExactPathMatchesOnlyThatPath(t *testing.T) {
+	a := newTestApp()
+	s := makeSession(t, a, creationRequest{})
+	configuration := updateRequest{
+		Response: responseSpec{Status: 200, Body: "fallback"},
+		Rules: []rule{
+			{Match: matchSpec{Method: "GET", PathExact: "/callback"}, Response: responseSpec{Status: 302, Headers: map[string]string{"Location": "/done"}}},
+			{Match: matchSpec{Method: "GET", PathPrefix: "/api"}, Response: responseSpec{Status: 201, Body: "prefix"}},
+		},
+	}
+	if r := runAdmin(t, a, "PUT", "/api/endpoints/"+s.Token, configuration); r.Code != 200 {
+		t.Fatalf("update rules: %d: %s", r.Code, r.Body.String())
+	}
+	cases := []struct {
+		method, path    string
+		status, matched int
+	}{
+		{"GET", "/callback", 302, 0},
+		{"GET", "/callback/test", 200, -1},
+		{"GET", "/callbackxyz", 200, -1},
+		{"GET", "/Callback", 200, -1},
+		{"POST", "/callback", 200, -1},
+		{"GET", "/api", 201, 1},
+		{"GET", "/api/test", 201, 1},
+		{"GET", "/apixyz", 201, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			a.publicMux().ServeHTTP(rec, httptest.NewRequest(tc.method, "/c/"+s.Token+tc.path, nil))
+			if rec.Code != tc.status {
+				t.Fatalf("status=%d, want %d", rec.Code, tc.status)
+			}
+			if tc.status == 302 && rec.Header().Get("Location") != "/done" {
+				t.Fatalf("Location=%q", rec.Header().Get("Location"))
+			}
+		})
+	}
+	get := runAdmin(t, a, "GET", "/api/endpoints/"+s.Token, nil)
+	if get.Code != http.StatusOK {
+		t.Fatalf("get: %d", get.Code)
+	}
+	var saved session
+	if err := json.Unmarshal(get.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Rules) != 2 || saved.Rules[0].Match.PathExact != "/callback" || saved.Rules[1].Match.PathPrefix != "/api" {
+		t.Fatalf("persisted rules changed: %+v", saved.Rules)
+	}
+	if len(saved.Captures) != len(cases) {
+		t.Fatalf("captured %d, want %d", len(saved.Captures), len(cases))
+	}
+	for i, tc := range cases {
+		if saved.Captures[i].MatchedRule != tc.matched {
+			t.Fatalf("%s %s: matchedRule=%d, want %d", tc.method, tc.path, saved.Captures[i].MatchedRule, tc.matched)
+		}
+	}
+}
+
+func TestValidateExactPathRule(t *testing.T) {
+	cases := []struct {
+		name  string
+		match matchSpec
+		valid bool
+	}{
+		{"exact only", matchSpec{PathExact: "/callback"}, true},
+		{"prefix only", matchSpec{PathPrefix: "/callback"}, true},
+		{"other condition only", matchSpec{Method: "GET"}, true},
+		{"empty match is allowed via API", matchSpec{}, true},
+		{"exact missing slash", matchSpec{PathExact: "callback"}, false},
+		{"exact above 200 bytes", matchSpec{PathExact: "/" + strings.Repeat("x", 200)}, false},
+		{"both modes", matchSpec{PathExact: "/callback", PathPrefix: "/callback"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp()
+			s := makeSession(t, a, creationRequest{})
+			r := runAdmin(t, a, "PUT", "/api/endpoints/"+s.Token, updateRequest{Response: defaultResponse(), Rules: []rule{{Match: tc.match, Response: defaultResponse()}}})
+			if tc.valid && r.Code != 200 {
+				t.Fatalf("unexpected rejection: %d %s", r.Code, r.Body.String())
+			}
+			if !tc.valid && r.Code < 400 {
+				t.Fatalf("invalid rule accepted: %s", r.Body.String())
+			}
+		})
+	}
+}

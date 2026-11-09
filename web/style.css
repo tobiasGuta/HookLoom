@@ -217,6 +217,9 @@ dialog::backdrop{background:#15264285}.dialog-form{padding:26px}.dialog-head{dis
 .rule-field label{font-size:11px;margin-bottom:8px}
 .rule-field input,.rule-field textarea{margin-top:5px;background:var(--surface);font-size:12px}
 .rule-field textarea{min-height:76px;resize:vertical;font:12px/1.5 ui-monospace,Consolas,monospace}
+.path-match-inputs{display:grid;grid-template-columns:minmax(0,105px) minmax(0,1fr);gap:6px;margin-top:5px}
+.path-match-inputs select,.path-match-inputs input{min-width:0;margin:0;background:var(--surface);font-size:12px;padding:7px 6px}
+@media(max-width:620px){.path-match-inputs{grid-template-columns:minmax(0,1fr)}}
 .rule-all-toggle{display:flex;align-items:center;gap:8px;font-size:11px;margin:0 0 11px;color:var(--muted);font-weight:650}
 .rule-all-toggle input{width:auto;height:15px;margin:0;accent-color:var(--blue)}
 .rule-warning{background:var(--danger-bg);color:var(--danger);border-radius:6px;padding:8px;font-size:11px;margin:10px 0 0}
