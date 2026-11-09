@@ -149,7 +149,7 @@ main{width:min(100%,1650px);margin:0 auto;padding:25px 18px 45px}
 .inspector-pane{display:flex;flex-direction:column;gap:12px;min-width:0;height:100%}
 .activity-card{min-height:230px;overflow:hidden}
 .activity-card .pane-head{padding:18px 14px 12px}
-.activity-controls{display:grid;grid-template-columns:minmax(0,1fr) 115px;gap:6px;margin:0 12px 11px}
+.activity-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:0 12px 11px}.activity-controls input{grid-column:1/-1}
 .activity-controls input,.activity-controls select{background:var(--surface-quiet);font-size:11px;padding:7px 8px}
 .activity-table-head{display:grid;grid-template-columns:63px minmax(0,1fr) 65px 87px;gap:4px;padding:8px 12px;background:var(--surface-soft);font-size:10px;font-weight:800;color:var(--muted)}
 .request-list{max-height:286px;overflow-y:auto;padding:5px 10px 13px}
@@ -195,3 +195,42 @@ dialog::backdrop{background:#15264285}.dialog-form{padding:26px}.dialog-head{dis
 .response-preview-panel{min-height:335px}
 .response-preview{background:var(--surface-quiet);border:1px solid var(--border);border-radius:9px;padding:16px;min-height:180px;overflow-wrap:anywhere;white-space:pre-wrap;font:12px/1.65 ui-monospace,Consolas,monospace;color:var(--ink)}
 .response-preview-panel>.subtle{margin-top:6px}
+
+/* v0.4: compact visual conditional-rule builder and request-inspection actions. */
+.rules-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px}
+.rules-header .help-inline{margin-bottom:0}
+.rule-mode-switch{display:flex;gap:5px;background:var(--surface-soft);padding:4px;border:1px solid var(--border);border-radius:9px}
+.rule-mode-switch button{padding:6px 10px;background:transparent}
+.rule-mode-switch .mode-active{background:var(--surface);border-color:var(--border-strong);color:var(--blue);box-shadow:var(--shadow)}
+.rules-empty{background:var(--surface-quiet);border:1px dashed var(--border-strong);padding:17px;border-radius:9px;color:var(--muted);font-size:12px;margin-bottom:14px}
+.rule-card{border:1px solid var(--border);background:var(--surface-quiet);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.rule-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);background:var(--surface-soft)}
+.rule-title{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+.rule-priority{color:var(--muted);font-size:11px}
+.rule-actions{display:flex;align-items:center;gap:5px}
+.compact-icon{min-width:29px;height:29px;padding:3px;font-size:15px}
+.rule-subsection{padding:13px 14px 14px;border-bottom:1px solid var(--border)}
+.rule-subsection:last-child{border-bottom:0}
+.rule-subsection h4{font-size:12px;margin:0 0 10px}
+.rule-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.rule-fields .rule-field:last-child:nth-child(odd){grid-column:1/-1}
+.rule-field label{font-size:11px;margin-bottom:8px}
+.rule-field input,.rule-field textarea{margin-top:5px;background:var(--surface);font-size:12px}
+.rule-field textarea{min-height:76px;resize:vertical;font:12px/1.5 ui-monospace,Consolas,monospace}
+.rule-all-toggle{display:flex;align-items:center;gap:8px;font-size:11px;margin:0 0 11px;color:var(--muted);font-weight:650}
+.rule-all-toggle input{width:auto;height:15px;margin:0;accent-color:var(--blue)}
+.rule-warning{background:var(--danger-bg);color:var(--danger);border-radius:6px;padding:8px;font-size:11px;margin:10px 0 0}
+.rule-header-area{margin-top:11px}
+.rule-header-label{font-size:11px;font-weight:750;margin-bottom:7px}
+.rule-header-rows{display:grid;gap:6px}
+.rule-header-row{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.25fr) 29px;gap:6px;align-items:center}
+.rule-header-row input{padding:7px 8px;background:var(--surface);font-size:12px}
+.add-rule{margin-top:3px}
+.request-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.request-detail-heading h3{margin-bottom:0}
+.request-detail-heading button{padding:6px 9px}
+@media(max-width:490px){.rule-fields{grid-template-columns:1fr}.rule-fields .rule-field:last-child:nth-child(odd){grid-column:auto}.rule-card-head{flex-wrap:wrap}.rule-header-row{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr) 26px}}
+
+.rule-extra{border-top:1px solid var(--border);margin-top:12px;padding-top:9px}
+.rule-extra summary{color:var(--blue);cursor:pointer;font-size:11px;font-weight:750;padding:3px 0}
+.rule-extra .rule-fields{padding-top:12px}
