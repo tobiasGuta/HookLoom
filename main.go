@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -16,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,14 +34,16 @@ import (
 var uiFiles embed.FS
 
 const (
-	defaultTTL          = 30
-	defaultMaxRequests  = 50
-	defaultBodyLimitKiB = 64
-	maxSessions         = 8
-	maxRules            = 12
-	maxGlobalBytes      = 8 << 20
-	maxAdminJSONBytes   = 128 << 10
-	maxResponseBytes    = 64 << 10
+	defaultTTL            = 30
+	defaultMaxRequests    = 50
+	defaultBodyLimitKiB   = 64
+	maxSessions           = 8
+	maxRules              = 12
+	maxGlobalBytes        = 8 << 20
+	maxAdminJSONBytes     = 128 << 10
+	maxResponseBytes      = 64 << 10
+	maxConcurrentCaptures = 24
+	maxRequestsPerSecond  = 20
 )
 
 var headerKeyRE = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -108,20 +112,23 @@ type session struct {
 	Response     responseSpec `json:"response"`
 	Rules        []rule       `json:"rules"`
 	Captures     []capture    `json:"captures"`
+	rateWindow   time.Time
+	rateHits     int
 }
 
 type app struct {
-	mu         sync.Mutex
-	sessions   map[string]*session
-	tombstones map[string]time.Time
-	baseURL    string
-	adminToken string
-	usedBytes  int
-	now        func() time.Time
+	mu           sync.Mutex
+	sessions     map[string]*session
+	tombstones   map[string]time.Time
+	baseURL      string
+	adminToken   string
+	usedBytes    int
+	captureSlots chan struct{}
+	now          func() time.Time
 }
 
 func newApp(baseURL, adminToken string) *app {
-	return &app{sessions: make(map[string]*session), tombstones: make(map[string]time.Time), baseURL: strings.TrimRight(baseURL, "/"), adminToken: adminToken, now: time.Now}
+	return &app{sessions: make(map[string]*session), tombstones: make(map[string]time.Time), baseURL: strings.TrimRight(baseURL, "/"), adminToken: adminToken, captureSlots: make(chan struct{}, maxConcurrentCaptures), now: time.Now}
 }
 
 func randomToken(size int) (string, error) {
@@ -154,8 +161,14 @@ func validateResponse(r responseSpec) error {
 		if !headerKeyRE.MatchString(k) || prohibited[strings.ToLower(k)] {
 			return fmt.Errorf("unsupported response header name: %q", k)
 		}
-		if len(v) > 2048 || strings.ContainsAny(v, "\r\n\x00") {
+		if len(v) > 2048 {
 			return fmt.Errorf("invalid response header value for %q", k)
+		}
+		for j := 0; j < len(v); j++ {
+			// Forbid CRLF/header injection and all HTTP-disallowed control bytes.
+			if v[j] == 127 || (v[j] < 32 && v[j] != '\t') {
+				return fmt.Errorf("invalid response header value for %q", k)
+			}
 		}
 	}
 	return nil
@@ -285,7 +298,29 @@ func (a *app) publicMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/c/", a.receive)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Shed excess simultaneous requests rather than exhausting small VM resources.
+		select {
+		case a.captureSlots <- struct{}{}:
+			defer func() { <-a.captureSlots }()
+			mux.ServeHTTP(w, r)
+		default:
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "Capture server busy", http.StatusServiceUnavailable)
+		}
+	})
+}
+
+func (s *session) allowRate(now time.Time) bool {
+	if s.rateWindow.IsZero() || now.Before(s.rateWindow) || now.Sub(s.rateWindow) >= time.Second {
+		s.rateWindow = now
+		s.rateHits = 0
+	}
+	if s.rateHits >= maxRequestsPerSecond {
+		return false
+	}
+	s.rateHits++
+	return true
 }
 
 func (a *app) receive(w http.ResponseWriter, r *http.Request) {
@@ -320,6 +355,12 @@ func (a *app) receive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Request limit reached", http.StatusGone)
 		return
 	}
+	if !s.allowRate(now) {
+		a.mu.Unlock()
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "Endpoint rate limit reached", http.StatusTooManyRequests)
+		return
+	}
 	maxBody := s.BodyLimitKiB * 1024
 	a.mu.Unlock()
 
@@ -345,7 +386,15 @@ func (a *app) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	h := r.Header.Clone()
 	event := capture{ID: id, At: a.now(), Method: r.Method, Path: rest, Query: r.URL.Query(), Headers: h, Body: body, BodyEncoding: encoded, BodyBytes: len(data), Truncated: oversized, MatchedRule: -1}
-	cost := len(body) + len(rest) + 1024
+	// Account for retained query strings and header metadata as well as body bytes.
+	// This is a bounded accounting budget, not an exact Go heap measurement.
+	cost := len(body) + len(rest) + len(r.Method) + len(id) + 1536
+	for k, vs := range event.Query {
+		cost += len(k) + 64
+		for _, v := range vs {
+			cost += len(v) + 32
+		}
+	}
 	for k, vs := range h {
 		cost += len(k)
 		for _, v := range vs {
@@ -410,7 +459,18 @@ func jsonError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 func decodeJSON(r *http.Request, out any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxAdminJSONBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxAdminJSONBytes+1))
+	if err != nil {
+		return errors.New("could not read JSON payload")
+	}
+	if len(data) > maxAdminJSONBytes {
+		return errors.New("JSON payload exceeds 128 KiB")
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return errors.New("expected a JSON object")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
 		return err
@@ -434,7 +494,23 @@ func (a *app) adminMux() http.Handler {
 		serveUI(w, r, "web/style.css", "text/css; charset=utf-8")
 	})
 	mux.Handle("/api/", a.authorize(http.HandlerFunc(a.adminAPI)))
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prevent DNS rebinding from making the dashboard available at an
+		// attacker-controlled hostname that resolves to loopback.
+		if !isAllowedAdminHost(r.Host) {
+			http.Error(w, "Invalid dashboard Host", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func isAllowedAdminHost(hostport string) bool {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port == "" {
+		return false
+	}
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 func serveUI(w http.ResponseWriter, r *http.Request, path, ctype string) {
 	if r.Method != "GET" {
@@ -460,7 +536,12 @@ func serveUI(w http.ResponseWriter, r *http.Request, path, ctype string) {
 }
 func (a *app) authorize(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			jsonError(w, 401, "Admin token required")
+			return
+		}
+		provided := strings.TrimPrefix(auth, "Bearer ")
 		if len(provided) != len(a.adminToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(a.adminToken)) != 1 {
 			jsonError(w, 401, "Admin token required")
 			return
@@ -659,18 +740,28 @@ func (a *app) export(w http.ResponseWriter, token string) {
 	w.Header().Set("Content-Disposition", "attachment; filename=hookloom-"+token[:8]+".json")
 	writeJSON(w, 200, out)
 }
+func validCaptureBase(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	return u.Hostname() != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.Opaque == ""
+}
 func isLoopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
 	}
 	ip := net.ParseIP(host)
-	return (ip != nil && ip.IsLoopback()) || host == "localhost"
+	return ip != nil && ip.IsLoopback()
 }
+
+var adminTokenRE = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
+
 func loadAdminToken() (string, string, error) {
 	if token := os.Getenv("HOOKLOOM_ADMIN_TOKEN"); token != "" {
-		if len(token) < 32 {
-			return "", "", errors.New("HOOKLOOM_ADMIN_TOKEN must have at least 32 characters")
+		if !adminTokenRE.MatchString(token) {
+			return "", "", errors.New("HOOKLOOM_ADMIN_TOKEN must be 32-128 base64url characters")
 		}
 		return token, "environment", nil
 	}
@@ -683,10 +774,17 @@ func loadAdminToken() (string, string, error) {
 		return "", "", err
 	}
 	path := filepath.Join(dir, "admin.token")
-	if b, err := os.ReadFile(path); err == nil {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+			return "", "", errors.New("saved admin token must be a regular file with mode 0600")
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", "", err
+		}
 		token := strings.TrimSpace(string(b))
-		if len(token) < 32 {
-			return "", "", errors.New("saved admin token too short")
+		if !adminTokenRE.MatchString(token) {
+			return "", "", errors.New("saved admin token must be 32-128 base64url characters")
 		}
 		return token, path, nil
 	} else if !os.IsNotExist(err) {
@@ -720,8 +818,8 @@ func main() {
 	if _, _, err := net.SplitHostPort(*ingest); err != nil {
 		log.Fatal("Invalid -ingest: ", err)
 	}
-	if !(strings.HasPrefix(*publicBase, "https://") || strings.HasPrefix(*publicBase, "http://")) {
-		log.Fatal("-public-base must start with http:// or https://")
+	if !validCaptureBase(*publicBase) {
+		log.Fatal("-public-base must be a complete http(s) URL without a path, query, fragment or credentials")
 	}
 	token, path, err := loadAdminToken()
 	if err != nil {
