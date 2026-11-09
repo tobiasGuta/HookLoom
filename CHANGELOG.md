@@ -1,6 +1,26 @@
 # Changelog
 
-## v0.3 — Organized workspace redesign (preview)
+## v0.4 — Visual rules and request inspection (review)
+
+- Introduce a visual conditional-rule builder with method/path matching,
+  optional query/header/body conditions, status/delay/body settings, and
+  per-rule response header rows.
+- Provide rule order controls, explicit catch-all matching, validation to
+  prevent accidental match-all rules, and a lossless Advanced JSON editor
+  toggle for the existing API shape.
+- Expand request search across path, query parameters, headers, and bodies.
+  Add a matched-rule/default-response filter and a Copy JSON action for
+  individual captured requests, with a sensitive-data reminder.
+- Maintain the v0.3 layout, neutral visual design, loopback-only admin,
+  and unchanged Go backend API; no new runtime dependencies.
+- Test the frontend with automated browser interaction checks and validate
+  rule matching and default responses against the live Go service.
+
+**Compatibility:** No configuration or token migration needed. Temporary
+captures remain in RAM and disappear when the process stops. Not deployed to Azure.
+
+
+## v0.3 — Organized workspace redesign
 
 - Match the cleaner reference design with a compact workspace summary, more coherent endpoint identity and three-column spacing, separate request activity/details cards, and a less crowded editor.
 - Add a line-numbered exact-text response body editor with an opt-in JSON formatter; keep header editing and response presets.
