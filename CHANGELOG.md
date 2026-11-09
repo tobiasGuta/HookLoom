@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7 — Pre-deployment security hardening (review)
+
+- Use a security-supported Go **1.27.3** toolchain in CI, while retaining
+  Go 1.23 syntax compatibility in `go.mod` for now. Production builds must
+  also be compiled with a patched, supported Go release.
+- Reject capture listener bindings to wildcard/public/non-loopback addresses
+  by default; allow explicit non-loopback opt-in only after network review.
+- Apply `Referrer-Policy: no-referrer` and `Cache-Control: no-store` to
+  every capture response, including rate-limit and unknown-path errors, to
+  reduce accidental leakage of temporary endpoint URLs.
+- Add regression tests for new security invariants and an explicit
+  pre-deployment threat model and checklist (`docs/security-review.md`).
+- No changes to Interactsh or Azure infrastructure; no changes to the
+  ordinary loopback-first Fedora testing workflow.
+
+
 ## v0.6 — Rule-conflict warnings (review)
 
 - Warn when an earlier rule provably matches **every request** that a later
