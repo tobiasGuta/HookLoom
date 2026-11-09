@@ -295,7 +295,7 @@ function renderRequestDetail(ev){
 // Every existing condition and response field maps to the unchanged Go API.
 function toVisualRule(rule){
  const m={...(rule.match||{})},r=rule.response||{};
- return {match:m,matchAll:!Object.values(m).some(value=>String(value||'').length>0),response:{status:r.status??200,delayMs:r.delayMs??0,body:r.body??''},headerRows:Object.entries(r.headers||{}).map(([name,value])=>({name,value}))};
+ return {match:m,pathMode:m.pathExact?'exact':'prefix',matchAll:!Object.values(m).some(value=>String(value||'').length>0),response:{status:r.status??200,delayMs:r.delayMs??0,body:r.body??''},headerRows:Object.entries(r.headers||{}).map(([name,value])=>({name,value}))};
 }
 function isMatchDefined(match){return Object.values(match).some(value=>String(value||'').trim().length>0)}
 function readVisualRules(){
@@ -306,6 +306,9 @@ function readVisualRules(){
   if(match.queryValue&&!match.queryKey)throw new Error(label+': a query value requires a query key.');
   if(match.headerValue&&!match.headerKey)throw new Error(label+': a header value requires a header key.');
   if(match.pathPrefix&&!match.pathPrefix.startsWith('/'))throw new Error(label+': path prefix must start with /.');
+  if(match.pathExact&&!match.pathExact.startsWith('/'))throw new Error(label+': exact path must start with /.');
+  if(match.pathPrefix&&match.pathExact)throw new Error(label+': choose either Starts with or Exact match.');
+  if(!draft.matchAll&&draft.pathMode==='exact'&&!match.pathExact)throw new Error(label+': enter a path when using Exact match.');
   if(match.method&&match.method!==match.method.toUpperCase())throw new Error(label+': HTTP method must be uppercase.');
   const headers={},seen=new Set();
   for(const row of draft.headerRows){
@@ -368,7 +371,7 @@ function renderRuleEditor(){
   actions.append(up,down,remove);top.append(title,actions);card.append(top);
   const condition=el('div','rule-subsection');condition.append(el('h4','','When this request matches'));
   const basic=el('div','rule-fields');
-  const basicInputs=[['Method','method','GET, POST, HEAD…'],['Path starts with','pathPrefix','/callback']];
+  const basicInputs=[['Method','method','GET, POST, HEAD…']];
   const extraInputs=[['Query key','queryKey','role'],['Query value','queryValue','admin'],['Header name','headerKey','X-Test'],['Header value','headerValue','yes'],['Body includes','bodyContains','substring']];
   const allLabel=el('label','rule-all-toggle');const all=el('input');all.type='checkbox';all.checked=draft.matchAll;
   all.addEventListener('change',()=>{draft.matchAll=all.checked;markEdited();renderRuleEditor()});allLabel.append(all,document.createTextNode('Match all requests (catch-all rule)'));condition.append(allLabel);
@@ -376,6 +379,32 @@ function renderRuleEditor(){
    const control=ruleInput(label,draft.match[key]||'',v=>{draft.match[key]=v},{placeholder});
    control.querySelector('input').disabled=draft.matchAll;basic.append(control);
   }
+  // The dropdown chooses the match operator; only the selected path key is sent to Go.
+  // Existing pathPrefix rules default to "Starts with" for backward compatibility.
+  const pathControl=el('div','rule-field');
+  const pathLabel=el('label','','Path');
+  const pathId='rule-path-'+index;pathLabel.htmlFor=pathId;
+  const pathGroup=el('div','path-match-inputs');
+  const pathModeSelect=el('select');pathModeSelect.setAttribute('aria-label',`Rule ${index+1} path match type`);
+  for(const [value,label] of [['prefix','Starts with'],['exact','Exact match']]){
+   const option=el('option','',label);option.value=value;pathModeSelect.append(option);
+  }
+  pathModeSelect.value=draft.pathMode||'prefix';pathModeSelect.disabled=draft.matchAll;
+  pathModeSelect.addEventListener('change',()=>{
+   const existingPath=draft.match.pathExact||draft.match.pathPrefix||'';
+   delete draft.match.pathExact;delete draft.match.pathPrefix;
+   draft.pathMode=pathModeSelect.value;
+   if(existingPath)draft.match[draft.pathMode==='exact'?'pathExact':'pathPrefix']=existingPath;
+   markEdited();renderRuleEditor();
+  });
+  const pathInput=el('input');pathInput.type='text';pathInput.id=pathId;
+  pathInput.placeholder='/callback';pathInput.disabled=draft.matchAll;
+  pathInput.value=draft.match[draft.pathMode==='exact'?'pathExact':'pathPrefix']||'';
+  pathInput.addEventListener('input',()=>{
+   const pathKey=draft.pathMode==='exact'?'pathExact':'pathPrefix';
+   draft.match[pathKey]=pathInput.value;markEdited();
+  });
+  pathGroup.append(pathModeSelect,pathInput);pathControl.append(pathLabel,pathGroup);basic.append(pathControl);
   condition.append(basic);
   const more=el('details','rule-extra');more.open=extraInputs.some(([,key])=>!!draft.match[key]);
   const summary=el('summary','','More match conditions (query, headers, body)');more.append(summary);
