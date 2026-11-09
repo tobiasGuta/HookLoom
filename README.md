@@ -2,14 +2,14 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.4` interface preview; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.5` exact-path matching review; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
 
 ## What it does
 
 - Creates unpredictable per-challenge paths such as `http://127.0.0.1:8765/c/<32-character-token>` using 192 bits of cryptographic randomness.
 - Captures HTTP methods, path suffixes, query parameters, headers, and request bodies (text or base64 if binary).
 - Returns an exact **custom HTTP response**: status code, body, headers (including `Location` for redirects), and 0–2000 ms delay.
-- Supports **first-match conditional rules** on method, relative path prefix, query value, header value, or body substring.
+- Supports **first-match conditional rules** on method, relative path prefix **or exact path**, query value, header value, or body substring.
 - Has a private, organized three-pane dashboard: endpoint navigation, visual response editing, and request inspection. Captured content is rendered as text, not injected as HTML.
 - The request inspector supports text search (path, query, and method), HTTP method filters, and quick readable request summaries.
 - Expiration is automatic; all captured data disappears on expiration or process exit. A deleted/expired endpoint returns **410 Gone** for up to one hour, then **404 Not Found**.
@@ -22,6 +22,27 @@ A small, **ephemeral HTTP request catcher and programmable response mocker** for
 The **Overview** tab holds the editable default response: quick presets, status, delay, response headers, and an exact-text body editor. **Response** shows a preview of the configured HTTP status, headers, and body without sending a request; actual server-added headers can differ. **Rules** provides a visual conditional-rule editor and an advanced JSON switch, while **Requests** offers quick navigation to retained captures. The right pane provides search, HTTP method filters, and request-detail tabs.
 
 Only explicit **Save changes** updates the endpoint. Changes to response headers and body remain drafts during normal auto-refresh, and the admin token is never saved in browser storage. The small top summary displays the **selected endpoint's capture URL**, not an arbitrary public listener URL.
+
+## v0.5 — Exact path matching (review)
+
+In **Rules → Visual builder**, each conditional rule's **Path** field now includes
+**Starts with** (the existing default) and **Exact match**. Choose **Exact match**
+and enter `/callback` to match only the suffix `/callback`, not `/callback/test`
+or `/callbackxyz`. Matching is case-sensitive, and uses the path *after* your
+endpoint token; query parameters do not affect the path comparison. Leaving a
+path empty in exact mode is blocked by the editor. Other method/query/header/body
+conditions still combine with the path restriction.
+
+The same functionality is available through **Rules → Advanced JSON** with
+`"match":{"pathExact":"/callback","method":"GET"}`. Older rules using
+`"pathPrefix"` still work unchanged, and both keys cannot be set together in
+one rule. Switching between editor modes preserves the chosen path operator.
+
+For a quick local test, configure **GET + Exact match + `/callback`** to return
+`302` and add the header `Location: /done`. Keep the default response at `200`.
+Then check `/callback` (302), `/callback/test` (200), and `/callbackxyz` (200)
+using your temporary capture URL. Select captured requests to see `Rule 1`
+versus `Default` in their details.
 
 ## v0.4 — Visual conditional rules and improved request inspection
 
