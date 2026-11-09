@@ -2,7 +2,7 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.3` interface preview; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.4` interface preview; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
 
 ## What it does
 
@@ -15,13 +15,38 @@ A small, **ephemeral HTTP request catcher and programmable response mocker** for
 - Expiration is automatic; all captured data disappears on expiration or process exit. A deleted/expired endpoint returns **410 Gone** for up to one hour, then **404 Not Found**.
 - Limits concurrent active endpoints (8), per-endpoint requests (1–100), TTL (1–240 minutes), request body sizes (1–256 KiB), response sizes, and global retained capture data (~8 MiB accounting budget).
 - Includes one-click response presets (JSON, text, HTML, redirects, 404, 500 and 204), editable header rows, and an optional advanced conditional-rule JSON editor. Presets require an explicit Save.
-- The v0.3 preview now matches the calm three-column visual design: a selected-endpoint summary bar, endpoint statistics, separate request activity/details cards, a lined response body editor with a JSON formatter, a response preview tab, and an always-visible save action.
+- The interface uses the calm three-column visual design: a selected-endpoint summary bar, endpoint statistics, separate request activity/details cards, a lined response body editor with a JSON formatter, a response preview tab, and an always-visible save action.
 
-## v0.3 workspace layout (preview branch)
+## Workspace layout
 
-The **Overview** tab holds the editable default response: quick presets, status, delay, response headers, and an exact-text body editor. **Response** shows a preview of the configured HTTP status, headers, and body without sending a request; actual server-added headers can differ. **Rules** keeps advanced conditional-rule JSON separate, while **Requests** offers quick navigation to retained captures. The right pane provides search, HTTP method filters, and request-detail tabs.
+The **Overview** tab holds the editable default response: quick presets, status, delay, response headers, and an exact-text body editor. **Response** shows a preview of the configured HTTP status, headers, and body without sending a request; actual server-added headers can differ. **Rules** provides a visual conditional-rule editor and an advanced JSON switch, while **Requests** offers quick navigation to retained captures. The right pane provides search, HTTP method filters, and request-detail tabs.
 
 Only explicit **Save changes** updates the endpoint. Changes to response headers and body remain drafts during normal auto-refresh, and the admin token is never saved in browser storage. The small top summary displays the **selected endpoint's capture URL**, not an arbitrary public listener URL.
+
+## v0.4 — Visual conditional rules and improved request inspection
+
+The **Rules** tab now opens a visual builder instead of requiring JSON. Add a rule,
+choose a method and optional path prefix, expand **More match conditions** to
+match query parameters, headers, or a body substring, and configure a custom
+response status, delay, body, and header rows. Rules are evaluated **top to bottom**:
+move them with the arrow controls, and use **Match all requests** only for an
+intentional catch-all (normally placed last). You can still use **Advanced JSON**
+to edit the exact existing rules array; switching views validates changes first.
+
+Changes remain drafts until **Save changes**. The API and existing rule format are
+unchanged. To exercise a new rule, select your endpoint's capture URL and send
+requests with `curl`. For example, create a POST rule that matches query key
+`role` with value `admin`, sets status `302` and a `Location: /done` response
+header; then test with `curl -i -X POST 'YOUR_CAPTURE_URL?role=admin'`.
+
+The **Request activity** panel now searches paths, query parameters, captured
+headers, and bodies, and can filter on method and whether a conditional rule
+matched. The selected request includes **Copy JSON** for troubleshooting; be
+careful because captured request data may include credentials or other secrets.
+
+The dashboard remains accessible only through the loopback admin listener, and
+this version is **not** deployed to Azure. Restarting HookLoom still clears
+in-memory endpoints and request history.
 
 ## Quick start on Fedora
 
@@ -62,13 +87,13 @@ curl -i -X POST 'http://127.0.0.1:8765/c/PASTE_YOUR_ENDPOINT_TOKEN/submit?test=o
   --data '{"challenge":"local-test"}'
 ```
 
-Click your endpoint in the left sidebar. The default response is `HTTP 200` with `{"ok":true}`. In the center pane, choose a response preset or edit the status, delay, header rows, and body; click **Save response** to activate changes. Advanced conditional rules remain available in the collapsible JSON editor. The right inspector displays incoming requests, with **Overview**, **Headers**, **Query**, **Body** (formatted JSON where possible), and **Raw** views. The dashboard refreshes request activity every five seconds **without replacing unsaved response edits**. Use **+ New** to open the endpoint-creation modal. The top-bar theme button switches between neutral light and dark layouts; the theme preference is stored locally, but the admin token remains in memory only.
+Click your endpoint in the left sidebar. The default response is `HTTP 200` with `{"ok":true}`. In the center pane, choose a response preset or edit the status, delay, header rows, and body; click **Save changes** to activate them. The **Rules** tab offers the visual builder and an Advanced JSON option. The right inspector displays incoming requests, with **Overview**, **Headers**, **Query**, **Body** (formatted JSON where possible), and **Raw** views. The dashboard refreshes request activity every five seconds **without replacing unsaved response edits**. Use **+ New** to open the endpoint-creation modal. The top-bar theme button switches between neutral light and dark layouts; the theme preference is stored locally, but the admin token remains in memory only.
 
 **Do not use a real CTF target yet:** a `127.0.0.1` URL only reaches your own Fedora computer. We will publish the capture port through a separate HTTPS hostname after local testing is complete.
 
 ## Example conditional rule
 
-Paste this JSON array into the dashboard's **Conditional response rules** field, then save:
+To enter the equivalent rule as JSON, open **Rules → Advanced JSON**, paste the array below, then click **Save changes**:
 
 ```json
 [
@@ -168,7 +193,7 @@ go test -race ./...
 go run .
 ```
 
-**Important:** Restarting destroys all temporary endpoints and captured requests by design. Export any lab evidence you wish to preserve first. The admin token is normally reused, so you can log in again with the same private file. If you previously relaxed the token file permissions, repair them locally with `chmod 600 ~/.config/hookloom/admin.token` before starting v0.2.
+**Important:** Restarting destroys all temporary endpoints and captured requests by design. Export any lab evidence you wish to preserve first. The admin token is normally reused, so you can log in again with the same private file. If you previously relaxed the token file permissions, repair them locally with `chmod 600 ~/.config/hookloom/admin.token` before starting HookLoom.
 
 The new throttling behavior may return HTTP 429/503 during deliberate stress tests; slow down requests or test against a local isolated instance. No changes to Azure, NSG, DNS, or Interactsh are required.
 

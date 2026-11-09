@@ -9,6 +9,8 @@ let editing=false;
 let currentSession=null;
 let renderedToken='';
 let refreshInProgress=false;
+let ruleMode='visual';
+let visualRules=[];
 const $=id=>document.getElementById(id);
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=String(text);return n};
 const notify=message=>{$('notice').textContent=message};
@@ -50,7 +52,7 @@ $('adminToken').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 $('lock').addEventListener('click',()=>{
  if(!discardPrompt())return;
  adminToken='';selected='';selectedEvent='';currentSession=null;renderedToken='';editing=false;
- $('requestSearch').value='';$('requestMethod').value='';
+ $('requestSearch').value='';$('requestMethod').value='';$('requestRule').value='';
  $('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');$('lock').classList.add('hidden');
  $('sessionPane').replaceChildren();$('requestList').replaceChildren();$('requestDetail').replaceChildren();
 });
@@ -71,6 +73,7 @@ $('createForm').addEventListener('submit',async e=>{
 $('refresh').addEventListener('click',()=>load({preserveEditor:true}).then(()=>notify('Request activity refreshed.')).catch(e=>notify(e.message)));
 $('requestSearch').addEventListener('input',()=>{if(currentSession)renderInspector(currentSession)});
 $('requestMethod').addEventListener('change',()=>{if(currentSession)renderInspector(currentSession)});
+$('requestRule').addEventListener('change',()=>{if(currentSession)renderInspector(currentSession)});
 $('endpointSearch').addEventListener('input',()=>{if(currentSession)renderSidebar(lastList);else renderSidebar([])});
 let lastList=[];
 async function load({preserveEditor=false}={}){
@@ -186,8 +189,15 @@ function renderSession(s){
  const codeInput=el('div','code-input');const nums=el('div','code-lines','1');nums.id='editorLines';nums.setAttribute('aria-hidden','true');const textarea=el('textarea');textarea.id='responseBody';textarea.value=s.response.body||'';textarea.spellcheck=false;textarea.setAttribute('aria-label','Response body (exact text)');textarea.addEventListener('input',()=>{markEdited();updateLineNumbers()});textarea.addEventListener('scroll',()=>{nums.scrollTop=textarea.scrollTop});codeInput.append(nums,textarea);editor.append(codeInput);body.append(editor);config.append(body);
  const preview=el('section','response-preview-panel hidden');preview.id='responsePreviewPanel';preview.append(el('h3','','Response preview'),el('p','help-inline','A preview of the configured response. The server also adds standard security headers.'));
  const pre=el('pre','response-preview');pre.id='previewHTTP';preview.append(pre,button('←  Edit response','subtle',()=>setCenterTab('overview')));root.append(preview);
- const rules=el('section','rules-panel hidden');rules.id='rulesPanel';rules.append(el('h3','','Conditional response rules'),el('p','help-inline','Advanced: first matching rule takes priority over the default response. JSON is supported.'));
- rules.append(trackedField('Rules (JSON array)',JSON.stringify(s.rules||[],null,2),'rulesJSON','textarea'));rules.append(el('p','help-inline','Rules are evaluated in order. Keep the array empty to use the default response for every request.'));root.append(rules);
+ const rules=el('section','rules-panel hidden');rules.id='rulesPanel';
+ const heading=el('div','rules-header');const headingText=el('div');headingText.append(el('h3','','Conditional response rules'),el('p','help-inline','Rules are evaluated from top to bottom. The first match wins.'));
+ const switcher=el('div','rule-mode-switch');switcher.setAttribute('role','group');switcher.setAttribute('aria-label','Rule editor mode');
+ const visualMode=button('Visual builder','subtle small-btn',()=>switchRuleMode('visual'));visualMode.id='visualMode';
+ const jsonMode=button('Advanced JSON','subtle small-btn',()=>switchRuleMode('json'));jsonMode.id='jsonMode';
+ switcher.append(visualMode,jsonMode);heading.append(headingText,switcher);rules.append(heading);
+ const visual=el('div');visual.id='visualRules';rules.append(visual);
+ const raw=el('div','hidden');raw.id='rawRules';raw.append(trackedField('Rules (JSON array)',JSON.stringify(s.rules||[],null,2),'rulesJSON','textarea'));raw.append(el('p','help-inline','Edit the complete rules array. Switch to Visual builder to validate and preview the rules.'));rules.append(raw);
+ root.append(rules);ruleMode='visual';visualRules=(s.rules||[]).map(toVisualRule);renderRuleEditor();
  const captured=el('section','captured-panel hidden');captured.id='capturedPanel';captured.append(el('h3','','Captured requests'),el('p','help-inline','Select a request to inspect its contents in the panel on the right.'));
  const captures=el('div','capture-overview');
  for(const ev of [...s.captures].reverse().slice(0,20)){
@@ -231,11 +241,13 @@ function renderInspector(s){
  const list=$('requestList');list.replaceChildren();
  const query=$('requestSearch').value.trim().toLowerCase();
  const method=$('requestMethod').value;
+ const matched=$('requestRule').value;
  const filtered=all.filter(ev=>{
   const m=String(ev.method||'').toUpperCase();
   const methodMatches=!method||(method==='OTHER'?!['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'].includes(m):m===method);
-  const text=(String(ev.path||'/')+' '+JSON.stringify(ev.query||{})+' '+m).toLowerCase();
-  return methodMatches&&(!query||text.includes(query));
+  const text=(String(ev.path||'/')+' '+JSON.stringify(ev.query||{})+' '+JSON.stringify(ev.headers||{})+' '+String(ev.body||'')+' '+m).toLowerCase();
+  const ruleMatches=!matched||(matched==='matched'?ev.matchedRule>=0:ev.matchedRule<0);
+  return methodMatches&&ruleMatches&&(!query||text.includes(query));
  });
  if(!all.length){selectedEvent='';list.append(el('div','empty-muted','No requests yet. Send traffic to the capture URL to see it here.'));$('requestDetail').replaceChildren(el('div','empty-muted','Select a captured request to inspect its details.'));return}
  if(!filtered.length){selectedEvent='';list.append(el('div','empty-muted','No requests match your filters.'));$('requestDetail').replaceChildren(el('div','empty-muted','Try changing the search or method filter.'));return}
@@ -244,13 +256,19 @@ function renderInspector(s){
   const b=el('button','request-button'+(selectedEvent===event.id?' active':''));b.type='button';b.setAttribute('aria-pressed',String(selectedEvent===event.id));
   const m=el('span','method',event.method);m.dataset.method=event.method;
   b.append(m,el('span','request-path',event.path||'/'),el('span','request-size',fmtSize(event.bodyBytes||0)),el('span','request-time',fmtTime(event.at)));
+  b.title=event.matchedRule>=0?'Matched conditional rule '+(event.matchedRule+1):'Used default response';
   b.addEventListener('click',()=>{selectedEvent=event.id;requestTab='overview';renderInspector(s)});list.append(b);
  }
  renderRequestDetail(filtered.find(item=>item.id===selectedEvent));
 }
 function renderRequestDetail(ev){
  const root=$('requestDetail');root.replaceChildren();
- const h=el('h3','','▤  Request details');root.append(h,el('p','',ev.method+' '+(ev.path||'/')+' · '+fmtDate(ev.at)));
+ const head=el('div','request-detail-heading');const h=el('h3','','▤  Request details');
+ const copy=button('Copy JSON','subtle small-btn',()=>{
+  if(!navigator.clipboard?.writeText){notify('Clipboard unavailable. Open Raw to copy the request manually.');return}
+  navigator.clipboard.writeText(JSON.stringify(ev,null,2)).then(()=>notify('Request JSON copied. It may contain sensitive headers or bodies.')).catch(()=>notify('Clipboard unavailable. Open Raw to copy the request manually.'));
+ });
+ copy.title='Copy this captured request as JSON (may include secrets)';head.append(h,copy);root.append(head,el('p','',ev.method+' '+(ev.path||'/')+' · '+fmtDate(ev.at)));
  const tabs=el('div','request-tabs');tabs.setAttribute('role','tablist');
  const content=el('div','request-content');
  for(const [id,label] of [['overview','Overview'],['headers','Headers'],['query','Query'],['body','Body'],['raw','Raw']]){
@@ -273,10 +291,132 @@ function renderRequestDetail(ev){
   content.append(el('pre','',shown));
  }else content.append(el('pre','',JSON.stringify(ev,null,2)));
 }
+// Visual editor state stays in memory until the user clicks Save changes.
+// Every existing condition and response field maps to the unchanged Go API.
+function toVisualRule(rule){
+ const m={...(rule.match||{})},r=rule.response||{};
+ return {match:m,matchAll:!Object.values(m).some(value=>String(value||'').length>0),response:{status:r.status??200,delayMs:r.delayMs??0,body:r.body??''},headerRows:Object.entries(r.headers||{}).map(([name,value])=>({name,value}))};
+}
+function isMatchDefined(match){return Object.values(match).some(value=>String(value||'').trim().length>0)}
+function readVisualRules(){
+ return visualRules.map((draft,index)=>{
+  const label='Rule '+(index+1);
+  const match=draft.matchAll?{}:Object.fromEntries(Object.entries(draft.match).map(([k,v])=>[k,String(v??'').trim()]).filter(([,v])=>v));
+  if(!draft.matchAll&&!isMatchDefined(match))throw new Error(label+': set a condition or explicitly enable Match all requests.');
+  if(match.queryValue&&!match.queryKey)throw new Error(label+': a query value requires a query key.');
+  if(match.headerValue&&!match.headerKey)throw new Error(label+': a header value requires a header key.');
+  if(match.pathPrefix&&!match.pathPrefix.startsWith('/'))throw new Error(label+': path prefix must start with /.');
+  if(match.method&&match.method!==match.method.toUpperCase())throw new Error(label+': HTTP method must be uppercase.');
+  const headers={},seen=new Set();
+  for(const row of draft.headerRows){
+   const name=String(row.name||'').trim(),value=String(row.value||'');
+   if(!name&&!value)continue;
+   if(!name)throw new Error(label+': a response header is missing its name.');
+   if(seen.has(name.toLowerCase()))throw new Error(label+': duplicate response header '+name+'.');
+   seen.add(name.toLowerCase());headers[name]=value;
+  }
+  const status=Number(draft.response.status),delayMs=Number(draft.response.delayMs);
+  if(!Number.isInteger(status)||status<200||status>599)throw new Error(label+': status must be 200–599.');
+  if(!Number.isInteger(delayMs)||delayMs<0||delayMs>2000)throw new Error(label+': delay must be 0–2000 ms.');
+  return {match,response:{status,delayMs,headers,body:String(draft.response.body||'')}};
+ });
+}
+function readCurrentRules(){
+ if(ruleMode==='visual')return readVisualRules();
+ let parsed;try{parsed=JSON.parse($('rulesJSON').value)}catch{throw new Error('Advanced rules JSON is invalid.');}
+ if(!Array.isArray(parsed))throw new Error('Advanced rules must be a JSON array.');
+ if(parsed.length>12)throw new Error('At most 12 rules can be configured.');
+ return parsed;
+}
+function switchRuleMode(mode){
+ if(mode===ruleMode)return;
+ try{
+  if(mode==='json')$('rulesJSON').value=JSON.stringify(readVisualRules(),null,2);
+  else{
+   const rules=readCurrentRules();
+   visualRules=rules.map(toVisualRule);
+  }
+  ruleMode=mode;renderRuleEditor();
+ }catch(e){notify('Cannot switch rule editor: '+e.message)}
+}
+function ruleInput(label,value,apply,options={}){
+ const wrapper=el('div','rule-field');const labelEl=el('label','',label);
+ const field=el(options.multiline?'textarea':options.choices?'select':'input');
+ if(options.multiline){field.rows=3;field.spellcheck=false}
+ else if(options.choices){for(const [value,label] of options.choices){const opt=el('option','',label);opt.value=value;field.append(opt)}}
+ else{field.type=options.type||'text';if(options.placeholder)field.placeholder=options.placeholder;if(options.type==='number'){field.step='1';if(options.min!==undefined)field.min=options.min;if(options.max!==undefined)field.max=options.max}}
+ field.value=String(value??'');
+ const eventName=field.tagName==='SELECT'?'change':'input';
+ field.addEventListener(eventName,()=>{apply(field.value);markEdited()});
+ labelEl.append(field);wrapper.append(labelEl);return wrapper;
+}
+function renderRuleEditor(){
+ const visual=$('visualRules'),raw=$('rawRules');if(!visual||!raw)return;
+ visual.classList.toggle('hidden',ruleMode!=='visual');raw.classList.toggle('hidden',ruleMode!=='json');
+ $('visualMode').classList.toggle('mode-active',ruleMode==='visual');$('jsonMode').classList.toggle('mode-active',ruleMode==='json');
+ if(ruleMode!=='visual')return;
+ visual.replaceChildren();
+ if(!visualRules.length)visual.append(el('div','rules-empty','No conditional rules yet. The endpoint returns its default response.'));
+ visualRules.forEach((draft,index)=>{
+  const card=el('article','rule-card');
+  const top=el('div','rule-card-head');
+  const title=el('div','rule-title');title.append(el('strong','',`Rule ${index+1}`),el('span','rule-priority',index===0?'First priority':`Priority ${index+1}`));
+  const actions=el('div','rule-actions');
+  const up=button('↑','subtle compact-icon',()=>moveRule(index,-1));up.title='Move rule up';up.setAttribute('aria-label',`Move rule ${index+1} up`);up.disabled=index===0;
+  const down=button('↓','subtle compact-icon',()=>moveRule(index,1));down.title='Move rule down';down.setAttribute('aria-label',`Move rule ${index+1} down`);down.disabled=index===visualRules.length-1;
+  const remove=button('Remove','danger small-btn',()=>{visualRules.splice(index,1);markEdited();renderRuleEditor()});
+  actions.append(up,down,remove);top.append(title,actions);card.append(top);
+  const condition=el('div','rule-subsection');condition.append(el('h4','','When this request matches'));
+  const basic=el('div','rule-fields');
+  const basicInputs=[['Method','method','GET, POST, HEAD…'],['Path starts with','pathPrefix','/callback']];
+  const extraInputs=[['Query key','queryKey','role'],['Query value','queryValue','admin'],['Header name','headerKey','X-Test'],['Header value','headerValue','yes'],['Body includes','bodyContains','substring']];
+  const allLabel=el('label','rule-all-toggle');const all=el('input');all.type='checkbox';all.checked=draft.matchAll;
+  all.addEventListener('change',()=>{draft.matchAll=all.checked;markEdited();renderRuleEditor()});allLabel.append(all,document.createTextNode('Match all requests (catch-all rule)'));condition.append(allLabel);
+  for(const [label,key,placeholder] of basicInputs){
+   const control=ruleInput(label,draft.match[key]||'',v=>{draft.match[key]=v},{placeholder});
+   control.querySelector('input').disabled=draft.matchAll;basic.append(control);
+  }
+  condition.append(basic);
+  const more=el('details','rule-extra');more.open=extraInputs.some(([,key])=>!!draft.match[key]);
+  const summary=el('summary','','More match conditions (query, headers, body)');more.append(summary);
+  const extraGrid=el('div','rule-fields');
+  for(const [label,key,placeholder] of extraInputs){
+   const control=ruleInput(label,draft.match[key]||'',v=>{draft.match[key]=v},{placeholder});
+   control.querySelector('input').disabled=draft.matchAll;extraGrid.append(control);
+  }
+  more.append(extraGrid);condition.append(more);
+  if(draft.matchAll)condition.append(el('p','rule-warning','This rule matches every request. Place it last so later rules can still run.'));
+  card.append(condition);
+  const result=el('div','rule-subsection');result.append(el('h4','','Then respond with'));
+  const fields=el('div','rule-fields rule-response-fields');
+  fields.append(ruleInput('HTTP status',draft.response.status,v=>draft.response.status=v,{type:'number',min:200,max:599}),ruleInput('Delay (ms)',draft.response.delayMs,v=>draft.response.delayMs=v,{type:'number',min:0,max:2000}));
+  result.append(fields);
+  const body=ruleInput('Response body (exact text)',draft.response.body,v=>draft.response.body=v,{multiline:true});result.append(body);
+  const headerArea=el('div','rule-header-area');headerArea.append(el('div','rule-header-label','Response headers'));
+  const rows=el('div','rule-header-rows');
+  draft.headerRows.forEach((h,rowIndex)=>{
+   const line=el('div','rule-header-row');const k=el('input'),v=el('input');
+   k.type='text';k.placeholder='Header name';k.value=h.name;k.setAttribute('aria-label',`Rule ${index+1} response header name`);
+   v.type='text';v.placeholder='Header value';v.value=h.value;v.setAttribute('aria-label',`Rule ${index+1} response header value`);
+   k.addEventListener('input',()=>{h.name=k.value;markEdited()});v.addEventListener('input',()=>{h.value=v.value;markEdited()});
+   const rm=button('×','icon-btn',()=>{draft.headerRows.splice(rowIndex,1);markEdited();renderRuleEditor()});rm.setAttribute('aria-label','Remove rule header');line.append(k,v,rm);rows.append(line);
+  });
+  headerArea.append(rows,button('+ Add response header','secondary-link',()=>{draft.headerRows.push({name:'',value:''});markEdited();renderRuleEditor()}));result.append(headerArea);
+  card.append(result);visual.append(card);
+ });
+ const add=button('+ Add conditional rule','subtle add-rule',()=>{
+  if(visualRules.length>=12){notify('Maximum of 12 conditional rules.');return}
+  visualRules.push(toVisualRule({match:{method:'GET'},response:{status:200,headers:{},body:'',delayMs:0}}));markEdited();renderRuleEditor();
+ });add.disabled=visualRules.length>=12;visual.append(add);
+}
+function moveRule(index,direction){
+ const next=index+direction;if(next<0||next>=visualRules.length)return;
+ [visualRules[index],visualRules[next]]=[visualRules[next],visualRules[index]];markEdited();renderRuleEditor();
+}
+
 async function saveSettings(token){
  try{
-  const payload={response:{status:Number($('responseStatus').value),delayMs:Number($('responseDelay').value),headers:readHeaders(),body:$('responseBody').value},rules:JSON.parse($('rulesJSON').value)};
-  if(!Array.isArray(payload.rules))throw new Error('Rules must be a JSON array.');
+  const payload={response:{status:Number($('responseStatus').value),delayMs:Number($('responseDelay').value),headers:readHeaders(),body:$('responseBody').value},rules:readCurrentRules()};
   await api('endpoints/'+token,{method:'PUT',body:JSON.stringify(payload)});
   editing=false;await load();notify('Response saved. New requests will use these settings.');
  }catch(e){notify('Could not save: '+e.message)}
