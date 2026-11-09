@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.5 — Exact path matching (review)
+## v0.6 — Rule-conflict warnings (review)
+
+- Warn when an earlier rule provably matches **every request** that a later
+  rule could match, making the later rule unreachable under first-match priority.
+- Show nonblocking warnings both at the top of the Rules tab and beside the
+  affected visual rule; update them as matching fields or priority change.
+- Support Advanced JSON with the same analysis, including conservative
+  matching across method, exact/prefix path, query, header and body conditions.
+- Add dependency-free Node.js regression tests and include them in GitHub CI.
+- Leave matching semantics, server-side validation, response handling,
+  administrative access, and capture data unchanged.
+
+
+## v0.5 — Exact path matching
 
 - Add `pathExact` as a case-sensitive alternative to existing `pathPrefix` in
   conditional rule matching, with validation rejecting ambiguous dual-mode
