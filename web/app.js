@@ -18,7 +18,7 @@ async function api(path,options={}){
 function login(){adminToken=$('adminToken').value.trim();$('adminToken').value=''; if(!adminToken)return;load().then(()=>{$('loginPane').classList.add('hidden');$('workspace').classList.remove('hidden')}).catch(e=>{adminToken='';alert('Authentication failed: '+e.message)})}
 $('unlock').addEventListener('click',login);
 $('adminToken').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
-$('lock').addEventListener('click',()=>{adminToken='';selected='';$('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');$('sessionPane').replaceChildren(el('p','muted','Select a session.'))});
+$('lock').addEventListener('click',()=>{adminToken='';selected='';editing=false;$('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');$('sessionPane').replaceChildren(el('p','muted','Select a session.'))});
 $('refresh').addEventListener('click',()=>load().catch(e=>no(e.message)));
 $('create').addEventListener('click',async()=>{
  try{
@@ -33,7 +33,7 @@ async function load(){if(!adminToken)return;
  for(const s of all){const b=el('button','sessionbtn'+(selected===s.token?' active':''));b.type='button';b.append(el('strong','',s.name),el('div','smallline',`${s.seen}/${s.maxRequests} requests · ${remaining(s.expiresAt)}`));b.addEventListener('click',()=>{selected=s.token;selectedEvent='';editing=false;load().catch(e=>no(e.message))});list.append(b)}
  const data=await api('endpoints/'+selected);renderSession(data);
 }
-function textField(label,value,id,rows){const l=el('label');l.textContent=label;const field=el(rows?'textarea':'input');field.id=id;if(!rows)field.type='text';field.value=value;l.append(field);return l}
+function textField(label,value,id,rows){const l=el('label');l.textContent=label;const field=el(rows?'textarea':'input');field.id=id;if(!rows)field.type='text';field.value=value;field.addEventListener('input',()=>{editing=true});l.append(field);return l}
 function renderSession(s){
  const root=$('sessionPane');root.replaceChildren();
  const h=el('div','detailhead');h.append(el('h2','',s.name),el('span','pill',remaining(s.expiresAt)));root.append(h);
@@ -44,6 +44,27 @@ function renderSession(s){
  root.append(el('h2','','Response configuration'));
  root.append(el('p','hint','Changes affect future requests. The first matching conditional rule wins; otherwise the default response is sent.'));
  const settings=el('div','settings');
+ const presetLabel=el('label');presetLabel.textContent='Quick response preset (loads values; click Save to apply)';
+ const presetSelect=el('select');
+ const presets=[
+  ['','Choose a preset…',null],
+  ['json','200 · JSON',{status:200,headers:{'Content-Type':'application/json; charset=utf-8'},body:'{"ok":true}'}],
+  ['text','200 · Plain text',{status:200,headers:{'Content-Type':'text/plain; charset=utf-8'},body:'Hello from HookLoom'}],
+  ['html','200 · HTML',{status:200,headers:{'Content-Type':'text/html; charset=utf-8'},body:'<!doctype html><title>HookLoom</title><h1>It works</h1>'}],
+  ['redirect','302 · Redirect',{status:302,headers:{'Location':'/done'},body:''}],
+  ['notfound','404 · Not found',{status:404,headers:{'Content-Type':'text/plain; charset=utf-8'},body:'Not found'}],
+  ['error','500 · Server error',{status:500,headers:{'Content-Type':'text/plain; charset=utf-8'},body:'Server error'}],
+  ['empty','204 · No content',{status:204,headers:{},body:''}]
+ ];
+ for(const [value,label] of presets){const option=el('option','',label);option.value=value;presetSelect.append(option)}
+ presetSelect.addEventListener('change',()=>{
+  const found=presets.find(item=>item[0]===presetSelect.value);
+  if(!found||!found[2])return;
+  const response=found[2];$('responseStatus').value=String(response.status);$('responseDelay').value='0';
+  $('responseHeaders').value=JSON.stringify(response.headers,null,2);$('responseBody').value=response.body;
+  editing=true;no('Preset loaded into the editor. Click Save response settings to apply it.');
+ });
+ presetLabel.append(presetSelect);settings.append(presetLabel);
  const top=el('div','twocol');top.append(textField('HTTP status',String(s.response.status),'responseStatus',false),textField('Delay in milliseconds (0–2000)',String(s.response.delayMs),'responseDelay',false));settings.append(top);
  settings.append(textField('Response headers (JSON object)',JSON.stringify(s.response.headers||{},null,2),'responseHeaders',true));
  settings.append(textField('Response body (exact text)',s.response.body||'','responseBody',true));
@@ -66,7 +87,7 @@ function renderSession(s){
 async function saveSettings(token){
  try{
   const payload={response:{status:Number($('responseStatus').value),delayMs:Number($('responseDelay').value),headers:JSON.parse($('responseHeaders').value),body:$('responseBody').value},rules:JSON.parse($('rulesJSON').value)};
-  await api('endpoints/'+token,{method:'PUT',body:JSON.stringify(payload)});no('Response configuration saved.');await load();
+  await api('endpoints/'+token,{method:'PUT',body:JSON.stringify(payload)});editing=false;no('Response configuration saved.');await load();
  }catch(e){no('Could not save: '+e.message)}
 }
 async function deleteSession(token){if(!confirm('Destroy this endpoint and all in-memory captures?'))return;
@@ -75,4 +96,4 @@ async function deleteSession(token){if(!confirm('Destroy this endpoint and all i
 async function exportSession(token){try{
  const data=await api('endpoints/'+token+'/export');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const u=URL.createObjectURL(blob);const anchor=el('a');anchor.href=u;anchor.download='hookloom-'+token.slice(0,8)+'.json';document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);no('Export downloaded; handle CTF secrets carefully.');
  }catch(e){no(e.message)}}
-setInterval(()=>{if(adminToken && !$('workspace').classList.contains('hidden') && document.activeElement.tagName!=='TEXTAREA' && document.activeElement.tagName!=='INPUT' && document.activeElement.tagName!=='SELECT'){load().catch(e=>no(e.message))}},5000);
+setInterval(()=>{if(adminToken && !editing && !$('workspace').classList.contains('hidden') && document.activeElement.tagName!=='TEXTAREA' && document.activeElement.tagName!=='INPUT' && document.activeElement.tagName!=='SELECT'){load().catch(e=>no(e.message))}},5000);
