@@ -11,6 +11,7 @@ A small, **ephemeral HTTP request catcher and programmable response mocker** for
 - Returns an exact **custom HTTP response**: status code, body, headers (including `Location` for redirects), and 0–2000 ms delay.
 - Supports **first-match conditional rules** on method, relative path prefix, query value, header value, or body substring.
 - Has a private, organized three-pane dashboard: endpoint navigation, visual response editing, and request inspection. Captured content is rendered as text, not injected as HTML.
+- The request inspector supports text search (path, query, and method), HTTP method filters, and quick readable request summaries.
 - Expiration is automatic; all captured data disappears on expiration or process exit. A deleted/expired endpoint returns **410 Gone** for up to one hour, then **404 Not Found**.
 - Limits concurrent active endpoints (8), per-endpoint requests (1–100), TTL (1–240 minutes), request body sizes (1–256 KiB), response sizes, and global retained capture data (~8 MiB accounting budget).
 - Includes one-click response presets (JSON, text, HTML, redirects, 404, 500 and 204), editable header rows, and an optional advanced conditional-rule JSON editor. Presets require an explicit Save.
