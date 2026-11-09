@@ -488,3 +488,45 @@ func TestRuleConflictAnalyzerAsset(t *testing.T) {
 		t.Fatalf("unexpected Host accepted: %d", bad.Code)
 	}
 }
+
+// Security regression: the public capture listener must not disclose one-time
+// URL secrets through browser Referrer headers, even when an endpoint is absent.
+func TestCaptureReferrerPolicy(t *testing.T) {
+	a := newTestApp()
+	s := makeSession(t, a, creationRequest{})
+	for _, path := range []string{"/c/" + s.Token, "/c/" + s.Token + "/redirect", "/unmatched"} {
+		rec := httptest.NewRecorder()
+		a.publicMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("%s: Referrer-Policy = %q", path, got)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q", path, got)
+		}
+	}
+}
+
+func TestIngestBindingRequiresExplicitOptIn(t *testing.T) {
+	cases := []struct {
+		addr    string
+		optIn   bool
+		allowed bool
+	}{
+		{"127.0.0.1:8765", false, true},
+		{"[::1]:8765", false, true},
+		{"0.0.0.0:8765", false, false},
+		{":8765", false, false},
+		{"192.0.2.10:8765", false, false},
+		{"localhost:8765", false, false}, // DNS may change; use a numeric loopback address.
+		{"0.0.0.0:8765", true, true},
+		{":8765", true, true},
+		{"192.0.2.10:8765", true, true},
+		{"bad-address", true, false},
+	}
+	for _, tc := range cases {
+		err := validateIngestBind(tc.addr, tc.optIn)
+		if (err == nil) != tc.allowed {
+			t.Errorf("addr=%q optIn=%v: allowed=%v, want %v", tc.addr, tc.optIn, err == nil, tc.allowed)
+		}
+	}
+}
