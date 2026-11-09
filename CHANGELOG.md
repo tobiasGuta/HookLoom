@@ -2,6 +2,10 @@
 
 ## v0.3 — Organized workspace redesign (preview)
 
+- Match the cleaner reference design with a compact workspace summary, more coherent endpoint identity and three-column spacing, separate request activity/details cards, and a less crowded editor.
+- Add a line-numbered exact-text response body editor with an opt-in JSON formatter; keep header editing and response presets.
+- Make the center Response tab show an actual read-only preview of the default response and keep Requests tab content updated as new captures arrive.
+- Verify desktop and mobile views with browser-based frontend interaction tests against a stubbed administration API; backend Go tests and race checks still pass.
 - Replace the old stacked dashboard with a responsive three-pane workspace: endpoint sidebar, response editor, and independent request inspector.
 - Introduce a smaller top bar, endpoint search, a native dialog for creating endpoints, and clear session controls.
 - Replace the JSON-only response-header field with removable key/value rows. Advanced conditional-rule JSON editing remains available.
