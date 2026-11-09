@@ -1,0 +1,22 @@
+/HookLoom
+# Executables
+/hookloom
+/hookloom-linux-arm64
+*.exe
+*.test
+
+# Secrets and local state
+admin.token
+*.env
+.env
+*.key
+*.pem
+
+# Exports and capture evidence
+hookloom-*.json
+*.jsonl
+
+# Editor files
+.idea/
+.vscode/
+*.swp
