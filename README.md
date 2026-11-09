@@ -2,7 +2,7 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.2` tested local prototype; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.3` interface preview; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
 
 ## What it does
 
@@ -10,10 +10,10 @@ A small, **ephemeral HTTP request catcher and programmable response mocker** for
 - Captures HTTP methods, path suffixes, query parameters, headers, and request bodies (text or base64 if binary).
 - Returns an exact **custom HTTP response**: status code, body, headers (including `Location` for redirects), and 0–2000 ms delay.
 - Supports **first-match conditional rules** on method, relative path prefix, query value, header value, or body substring.
-- Has a private browser dashboard for creating endpoints, inspecting requests, editing rules, exporting JSON, and destroying endpoints.
+- Has a private, organized three-pane dashboard: endpoint navigation, visual response editing, and request inspection. Captured content is rendered as text, not injected as HTML.
 - Expiration is automatic; all captured data disappears on expiration or process exit. A deleted/expired endpoint returns **410 Gone** for up to one hour, then **404 Not Found**.
 - Limits concurrent active endpoints (8), per-endpoint requests (1–100), TTL (1–240 minutes), request body sizes (1–256 KiB), response sizes, and global retained capture data (~8 MiB accounting budget).
-- Adds simple **response presets** (JSON, text, HTML, redirects, 404, 500 and 204) to the editor; you still choose when to save them.
+- Includes one-click response presets (JSON, text, HTML, redirects, 404, 500 and 204), editable header rows, and an optional advanced conditional-rule JSON editor. Presets require an explicit Save.
 
 ## Quick start on Fedora
 
@@ -54,7 +54,7 @@ curl -i -X POST 'http://127.0.0.1:8765/c/PASTE_YOUR_ENDPOINT_TOKEN/submit?test=o
   --data '{"challenge":"local-test"}'
 ```
 
-Click your endpoint in the dashboard to view the request. The default response is `HTTP 200` with `{"ok":true}`. Test custom response bodies and headers using the response configuration form. In v0.2, use the **Quick response preset** dropdown to start with JSON, plain text, HTML, redirects, 404, 500, or an empty 204. Presets only populate editor fields; click **Save response settings** to activate them. The auto-refresh pauses while you are editing.
+Click your endpoint in the left sidebar. The default response is `HTTP 200` with `{"ok":true}`. In the center pane, choose a response preset or edit the status, delay, header rows, and body; click **Save response** to activate changes. Advanced conditional rules remain available in the collapsible JSON editor. The right inspector displays incoming requests, with **Overview**, **Headers**, **Query**, **Body** (formatted JSON where possible), and **Raw** views. The dashboard refreshes request activity every five seconds **without replacing unsaved response edits**. Use **+ New** to open the endpoint-creation modal. The top-bar theme button switches between neutral light and dark layouts; the theme preference is stored locally, but the admin token remains in memory only.
 
 **Do not use a real CTF target yet:** a `127.0.0.1` URL only reaches your own Fedora computer. We will publish the capture port through a separate HTTPS hostname after local testing is complete.
 
