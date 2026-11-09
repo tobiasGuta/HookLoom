@@ -15,6 +15,13 @@ A small, **ephemeral HTTP request catcher and programmable response mocker** for
 - Expiration is automatic; all captured data disappears on expiration or process exit. A deleted/expired endpoint returns **410 Gone** for up to one hour, then **404 Not Found**.
 - Limits concurrent active endpoints (8), per-endpoint requests (1–100), TTL (1–240 minutes), request body sizes (1–256 KiB), response sizes, and global retained capture data (~8 MiB accounting budget).
 - Includes one-click response presets (JSON, text, HTML, redirects, 404, 500 and 204), editable header rows, and an optional advanced conditional-rule JSON editor. Presets require an explicit Save.
+- The v0.3 preview now matches the calm three-column visual design: a selected-endpoint summary bar, endpoint statistics, separate request activity/details cards, a lined response body editor with a JSON formatter, a response preview tab, and an always-visible save action.
+
+## v0.3 workspace layout (preview branch)
+
+The **Overview** tab holds the editable default response: quick presets, status, delay, response headers, and an exact-text body editor. **Response** shows a preview of the configured HTTP status, headers, and body without sending a request; actual server-added headers can differ. **Rules** keeps advanced conditional-rule JSON separate, while **Requests** offers quick navigation to retained captures. The right pane provides search, HTTP method filters, and request-detail tabs.
+
+Only explicit **Save changes** updates the endpoint. Changes to response headers and body remain drafts during normal auto-refresh, and the admin token is never saved in browser storage. The small top summary displays the **selected endpoint's capture URL**, not an arbitrary public listener URL.
 
 ## Quick start on Fedora
 
