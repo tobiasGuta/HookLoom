@@ -500,6 +500,9 @@ func (a *app) adminMux() http.Handler {
 	mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
 		serveUI(w, r, "web/app.js", "application/javascript; charset=utf-8")
 	})
+	mux.HandleFunc("/rule_conflicts.js", func(w http.ResponseWriter, r *http.Request) {
+		serveUI(w, r, "web/rule_conflicts.js", "application/javascript; charset=utf-8")
+	})
 	mux.HandleFunc("/style.css", func(w http.ResponseWriter, r *http.Request) {
 		serveUI(w, r, "web/style.css", "text/css; charset=utf-8")
 	})
