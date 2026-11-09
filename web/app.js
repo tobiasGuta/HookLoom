@@ -23,6 +23,7 @@ const presets=[
 function button(label,cls,click){const b=el('button',cls,label);b.type='button';b.addEventListener('click',click);return b}
 function fmtDate(v){return new Date(v).toLocaleString()}
 function fmtTime(v){return new Date(v).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function fmtSize(bytes){return bytes>=1024?(bytes/1024).toFixed(bytes>=10240?0:1)+' KiB':bytes+' B'}
 function remaining(v){const sec=Math.max(0,Math.floor((new Date(v).getTime()-Date.now())/1000));return sec>60?Math.ceil(sec/60)+' min remaining':sec+' sec remaining'}
 function setTheme(theme){document.documentElement.dataset.theme=theme;$('themeToggle').textContent=theme==='dark'?'Light mode':'Dark mode';try{localStorage.setItem('hookloom-theme',theme)}catch{}}
 (function initTheme(){let theme='light';try{theme=localStorage.getItem('hookloom-theme')||'light'}catch{}setTheme(theme==='dark'?'dark':'light')})();
@@ -47,6 +48,7 @@ $('adminToken').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 $('lock').addEventListener('click',()=>{
  if(!discardPrompt())return;
  adminToken='';selected='';selectedEvent='';currentSession=null;renderedToken='';editing=false;
+ $('requestSearch').value='';$('requestMethod').value='';
  $('workspace').classList.add('hidden');$('loginPane').classList.remove('hidden');
  $('sessionPane').replaceChildren();$('requestList').replaceChildren();$('requestDetail').replaceChildren();
 });
@@ -65,6 +67,8 @@ $('createForm').addEventListener('submit',async e=>{
  finally{$('create').disabled=false}
 });
 $('refresh').addEventListener('click',()=>load({preserveEditor:true}).then(()=>notify('Request activity refreshed.')).catch(e=>notify(e.message)));
+$('requestSearch').addEventListener('input',()=>{if(currentSession)renderInspector(currentSession)});
+$('requestMethod').addEventListener('change',()=>{if(currentSession)renderInspector(currentSession)});
 $('endpointSearch').addEventListener('input',()=>{if(currentSession)renderSidebar(lastList);else renderSidebar([])});
 let lastList=[];
 async function load({preserveEditor=false}={}){
@@ -139,7 +143,11 @@ function applyPreset(spec,label){
 function renderSession(s){
  const root=$('sessionPane');root.replaceChildren();
  const head=el('div','detail-title-row');head.append(el('h2','',s.name),el('span','pill',remaining(s.expiresAt)));root.append(head);
- const stats=el('div','session-stats');stats.append(el('span','',s.seen+'/'+s.maxRequests+' requests'),el('span','',s.captures.length+' retained'),el('span','',s.bodyLimitKiB+' KiB body limit'));root.append(stats);
+ const stats=el('div','metric-grid');
+ for(const [label,value,detail] of [['Requests',s.seen+' / '+s.maxRequests,'received'],['Stored',String(s.captures.length),'captures'],['Body limit',s.bodyLimitKiB+' KiB','per request']]){
+  const item=el('div','metric');item.append(el('span','metric-label',label),el('strong','metric-value',value),el('span','metric-detail',detail));stats.append(item);
+ }
+ root.append(stats);
  root.append(el('span','field-label','Capture URL'));
  const url=el('div','endpoint-url');url.append(el('code','',s.url),button('Copy','subtle small-btn',()=>navigator.clipboard.writeText(s.url).then(()=>notify('Capture URL copied.')).catch(()=>notify('Copy failed: copy the URL manually.'))));root.append(url);
  const toolbar=el('div','actions-row');toolbar.append(button('Export requests','subtle small-btn',()=>exportSession(s.token)),button('Delete endpoint','danger small-btn',()=>deleteSession(s.token)));root.append(toolbar);
@@ -158,17 +166,27 @@ function renderSession(s){
  const save=el('div','save-row');const unsaved=el('span','unsaved','');unsaved.id='unsaved';save.append(unsaved,button('Save response','primary',()=>saveSettings(s.token)));root.append(save);
 }
 function renderInspector(s){
- $('captureCount').textContent=String(s.captures.length);
+ const all=[...s.captures].reverse();
+ $('captureCount').textContent=String(all.length);
  const list=$('requestList');list.replaceChildren();
- const reverse=[...s.captures].reverse();
- if(!reverse.length){selectedEvent='';list.append(el('div','empty-muted','Waiting for your first request. Send HTTP traffic to the capture URL.'));$('requestDetail').replaceChildren(el('div','empty-muted','Select a captured request to inspect its details.'));return}
- if(!selectedEvent||!reverse.some(ev=>ev.id===selectedEvent)){selectedEvent=reverse[0].id;requestTab='overview'}
- for(const event of reverse){
+ const query=$('requestSearch').value.trim().toLowerCase();
+ const method=$('requestMethod').value;
+ const filtered=all.filter(ev=>{
+  const m=String(ev.method||'').toUpperCase();
+  const methodMatches=!method||(method==='OTHER'?!['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'].includes(m):m===method);
+  const text=(String(ev.path||'/')+' '+JSON.stringify(ev.query||{})+' '+m).toLowerCase();
+  return methodMatches&&(!query||text.includes(query));
+ });
+ if(!all.length){selectedEvent='';list.append(el('div','empty-muted','No requests yet. Send traffic to the capture URL to see it here.'));$('requestDetail').replaceChildren(el('div','empty-muted','Select a captured request to inspect its details.'));return}
+ if(!filtered.length){selectedEvent='';list.append(el('div','empty-muted','No requests match your filters.'));$('requestDetail').replaceChildren(el('div','empty-muted','Try changing the search or method filter.'));return}
+ if(!selectedEvent||!filtered.some(ev=>ev.id===selectedEvent)){selectedEvent=filtered[0].id;requestTab='overview'}
+ for(const event of filtered){
   const b=el('button','request-button'+(selectedEvent===event.id?' active':''));b.type='button';b.setAttribute('aria-pressed',String(selectedEvent===event.id));
-  const line=el('div','request-main');line.append(el('span','method',event.method),el('span','request-path',event.path||'/'));b.append(line,el('div','request-timestamp',fmtTime(event.at)));
+  const line=el('div','request-main');const m=el('span','method',event.method);m.dataset.method=event.method;line.append(m,el('span','request-path',event.path||'/'));b.append(line);
+  const meta=el('div','request-extra');meta.append(el('span','',fmtTime(event.at)),el('span','',fmtSize(event.bodyBytes||0)));b.append(meta);
   b.addEventListener('click',()=>{selectedEvent=event.id;requestTab='overview';renderInspector(s)});list.append(b);
  }
- const ev=reverse.find(item=>item.id===selectedEvent);renderRequestDetail(ev);
+ renderRequestDetail(filtered.find(item=>item.id===selectedEvent));
 }
 function renderRequestDetail(ev){
  const root=$('requestDetail');root.replaceChildren();
