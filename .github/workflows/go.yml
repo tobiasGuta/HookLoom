@@ -25,6 +25,10 @@ jobs:
       - name: Race tests
         run: go test -race ./...
       - name: Dashboard JavaScript syntax
-        run: node --check web/app.js
+        run: |
+          node --check web/app.js
+          node --check web/rule_conflicts.js
+      - name: Rule-conflict regression tests
+        run: node --test tests/rule_conflicts.test.cjs
       - name: Build
         run: go build ./...

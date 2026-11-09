@@ -2,7 +2,7 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.5` exact-path matching review; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.6` rule-conflict warnings review; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
 
 ## What it does
 
@@ -23,7 +23,28 @@ The **Overview** tab holds the editable default response: quick presets, status,
 
 Only explicit **Save changes** updates the endpoint. Changes to response headers and body remain drafts during normal auto-refresh, and the admin token is never saved in browser storage. The small top summary displays the **selected endpoint's capture URL**, not an arbitrary public listener URL.
 
-## v0.5 — Exact path matching (review)
+## v0.6 — Rule-conflict warnings (review)
+
+The **Rules** tab now detects when a prior rule **fully shadows** a later
+rule, making that later rule unreachable. For example, a `GET` rule that
+**starts with** `/callback` placed above an **exact** `/callback/admin` rule
+will always win. The warning identifies both rule numbers and recommends
+moving the more specific rule up or narrowing the earlier one.
+
+- Warnings update as you edit, reorder, remove or add visual rules.
+- The **Advanced JSON** editor displays the same warnings for valid JSON.
+- The checker understands method, exact/prefix paths, query parameters,
+  header names/values, body substrings and catch-all rules.
+- This is an **advisory**, not an automatic change or a save blocker. Some
+  partial overlaps are intentionally not flagged to avoid false positives.
+- Matching, response behavior, listener bindings and capture retention are
+  unchanged. The warning calculations run locally in the dashboard, without
+  sending request data or admin tokens elsewhere.
+
+For regression tests, run `node --test tests/rule_conflicts.test.cjs` alongside
+`go test ./...`. GitHub Actions runs both automatically.
+
+## v0.5 — Exact path matching
 
 In **Rules → Visual builder**, each conditional rule's **Path** field now includes
 **Starts with** (the existing default) and **Exact match**. Choose **Exact match**

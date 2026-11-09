@@ -133,7 +133,11 @@ function trackedField(label,value,id,type='text'){
  if(type!=='textarea'){field.type=type;if(type==='number'){field.step='1'}}
  field.value=value;field.addEventListener('input',markEdited);wrapper.append(l,field);return wrapper;
 }
-function markEdited(){editing=true;const mark=$('unsaved');if(mark){mark.textContent='Unsaved changes';mark.classList.add('pending')}}
+function markEdited(){
+ editing=true;
+ const mark=$('unsaved');if(mark){mark.textContent='Unsaved changes';mark.classList.add('pending')}
+ if($('ruleConflicts') && !$('rulesPanel')?.classList.contains('hidden'))updateRuleConflictWarnings();
+}
 function addHeaderRow(name='',value=''){
  const row=el('div','header-row');row.className='header-row';
  const key=el('input');key.type='text';key.placeholder='Header name';key.value=name;key.setAttribute('aria-label','Response header name');
@@ -195,6 +199,7 @@ function renderSession(s){
  const visualMode=button('Visual builder','subtle small-btn',()=>switchRuleMode('visual'));visualMode.id='visualMode';
  const jsonMode=button('Advanced JSON','subtle small-btn',()=>switchRuleMode('json'));jsonMode.id='jsonMode';
  switcher.append(visualMode,jsonMode);heading.append(headingText,switcher);rules.append(heading);
+ const warnings=el('div','rule-conflicts hidden');warnings.id='ruleConflicts';warnings.setAttribute('role','status');warnings.setAttribute('aria-live','polite');rules.append(warnings);
  const visual=el('div');visual.id='visualRules';rules.append(visual);
  const raw=el('div','hidden');raw.id='rawRules';raw.append(trackedField('Rules (JSON array)',JSON.stringify(s.rules||[],null,2),'rulesJSON','textarea'));raw.append(el('p','help-inline','Edit the complete rules array. Switch to Visual builder to validate and preview the rules.'));rules.append(raw);
  root.append(rules);ruleMode='visual';visualRules=(s.rules||[]).map(toVisualRule);renderRuleEditor();
@@ -353,15 +358,64 @@ function ruleInput(label,value,apply,options={}){
  field.addEventListener(eventName,()=>{apply(field.value);markEdited()});
  labelEl.append(field);wrapper.append(labelEl);return wrapper;
 }
+// Warning-only analysis: compares matching predicates, never modifies rules.
+// Invalid drafts are skipped until there is enough information to analyze them.
+function conflictDrafts(){
+ if(ruleMode==='json'){
+  try{
+   const parsed=JSON.parse($('rulesJSON').value);
+   return Array.isArray(parsed)?parsed:null;
+  }catch{return null}
+ }
+ return visualRules.map(draft=>{
+  if(draft.matchAll)return {match:{}};
+  const match=Object.fromEntries(Object.entries(draft.match).map(([key,value])=>[key,String(value??'').trim()]).filter(([,value])=>value));
+  if(!isMatchDefined(match) || (draft.pathMode==='exact' && !match.pathExact))return null;
+  return {match};
+ });
+}
+function updateRuleConflictWarnings(){
+ const container=$('ruleConflicts');if(!container)return;
+ container.replaceChildren();
+ const rules=conflictDrafts();
+ if(rules===null){
+  container.classList.remove('hidden');
+  container.append(el('p','rule-conflict-note','Enter valid rules JSON to check rule priority.'));
+  return;
+ }
+ const checker=window.HookLoomConflictAnalyzer;
+ const warnings=checker?checker.findShadowedRules(rules):[];
+ const hasAtLeastTwo=rules.length>1;
+ container.classList.toggle('hidden',!warnings.length && !hasAtLeastTwo);
+ if(!warnings.length){
+  if(hasAtLeastTwo)container.append(el('p','rule-conflict-ok','✓ No unreachable rules detected. Partial overlaps may still exist.'));
+ }else{
+  container.append(el('strong','rule-conflict-heading',warnings.length===1?'1 unreachable rule detected':warnings.length+' unreachable rules detected'));
+  for(const issue of warnings){
+   const item=el('div','rule-conflict-item');
+   item.append(el('strong','',issue.title),el('p','',issue.detail+' '+issue.action));
+   container.append(item);
+  }
+ }
+ const cards=$('visualRules')?.querySelectorAll('.rule-card');
+ if(!cards)return;
+ for(const card of cards){
+  const target=card.querySelector('.rule-inline-warning');
+  if(!target)continue;
+  const issue=warnings.find(w=>w.later===Number(card.dataset.ruleIndex));
+  target.textContent=issue?issue.title+' '+issue.action:'';
+  target.classList.toggle('hidden',!issue);
+ }
+}
 function renderRuleEditor(){
  const visual=$('visualRules'),raw=$('rawRules');if(!visual||!raw)return;
  visual.classList.toggle('hidden',ruleMode!=='visual');raw.classList.toggle('hidden',ruleMode!=='json');
  $('visualMode').classList.toggle('mode-active',ruleMode==='visual');$('jsonMode').classList.toggle('mode-active',ruleMode==='json');
- if(ruleMode!=='visual')return;
+ if(ruleMode!=='visual'){updateRuleConflictWarnings();return;}
  visual.replaceChildren();
  if(!visualRules.length)visual.append(el('div','rules-empty','No conditional rules yet. The endpoint returns its default response.'));
  visualRules.forEach((draft,index)=>{
-  const card=el('article','rule-card');
+  const card=el('article','rule-card');card.dataset.ruleIndex=String(index);
   const top=el('div','rule-card-head');
   const title=el('div','rule-title');title.append(el('strong','',`Rule ${index+1}`),el('span','rule-priority',index===0?'First priority':`Priority ${index+1}`));
   const actions=el('div','rule-actions');
@@ -369,6 +423,7 @@ function renderRuleEditor(){
   const down=button('↓','subtle compact-icon',()=>moveRule(index,1));down.title='Move rule down';down.setAttribute('aria-label',`Move rule ${index+1} down`);down.disabled=index===visualRules.length-1;
   const remove=button('Remove','danger small-btn',()=>{visualRules.splice(index,1);markEdited();renderRuleEditor()});
   actions.append(up,down,remove);top.append(title,actions);card.append(top);
+  card.append(el('p','rule-inline-warning hidden'));
   const condition=el('div','rule-subsection');condition.append(el('h4','','When this request matches'));
   const basic=el('div','rule-fields');
   const basicInputs=[['Method','method','GET, POST, HEAD…']];
@@ -437,6 +492,7 @@ function renderRuleEditor(){
   if(visualRules.length>=12){notify('Maximum of 12 conditional rules.');return}
   visualRules.push(toVisualRule({match:{method:'GET'},response:{status:200,headers:{},body:'',delayMs:0}}));markEdited();renderRuleEditor();
  });add.disabled=visualRules.length>=12;visual.append(add);
+ updateRuleConflictWarnings();
 }
 function moveRule(index,direction){
  const next=index+direction;if(next<0||next>=visualRules.length)return;
