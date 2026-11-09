@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5 — Exact path matching (review)
+
+- Add `pathExact` as a case-sensitive alternative to existing `pathPrefix` in
+  conditional rule matching, with validation rejecting ambiguous dual-mode
+  matches and paths without a leading slash.
+- Provide a **Starts with / Exact match** selector in the visual rule builder.
+  Existing prefix rules remain unchanged; Advanced JSON round-trips either
+  representation without losing the selected matching behavior.
+- Add API-level regression tests for exact-path boundaries, wrong methods,
+  saved rules, captured match indexes, legacy prefix matching and validation.
+- No new dependencies and no changes to listener bindings, admin security,
+  Interactsh or Azure deployment.
+
+
 ## v0.4 — Visual rules and request inspection (review)
 
 - Introduce a visual conditional-rule builder with method/path matching,
