@@ -9,6 +9,7 @@
 - Add request inspector tabs (overview, headers, query, body, raw); pretty-print JSON request bodies without interpreting captured text as HTML.
 - Update captured request activity every five seconds without overwriting unsaved response edits.
 - Add neutral light and dark themes; only the visual theme is saved in browser local storage, not the admin token.
+- Refine the v0.3 preview with request search and HTTP method filtering, readable method/path/time/size activity rows, clearer endpoint statistics, and sticky desktop navigation/inspector panels.
 - Keep the backend API and its v0.2 hardening unchanged. No new runtime dependencies.
 
 **Compatibility:** No API or token migration required. Restarting the process clears temporary sessions and captures as before. Not deployed to Azure.
