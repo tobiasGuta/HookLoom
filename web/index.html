@@ -26,7 +26,7 @@
 
     <div id="workspace" class="hidden">
       <div class="workspace-heading">
-        <div><span class="overline">WORKSPACE</span><h1>Requests &amp; responses</h1><p>Manage short-lived endpoints, response behavior, and incoming traffic.</p></div>
+        <div><span class="overline">WORKSPACE / OVERVIEW</span><h1>Requests &amp; responses</h1><p>A clear place to manage temporary endpoints and inspect incoming traffic.</p></div>
         <button type="button" id="lock" class="subtle">Lock workspace</button>
       </div>
 
@@ -44,6 +44,18 @@
 
         <aside class="pane inspector-pane" aria-label="Request inspector">
           <div class="pane-head"><div><h2>Request activity <span id="captureCount" class="count">0</span></h2><p>Updates every 5 seconds</p></div><button type="button" id="refresh" class="subtle small-btn" title="Refresh requests">Refresh</button></div>
+          <div class="activity-controls">
+            <label for="requestSearch" class="sr-only">Search captured requests by path or query</label>
+            <input id="requestSearch" type="search" placeholder="Search requests" autocomplete="off">
+            <label for="requestMethod" class="sr-only">Filter requests by HTTP method</label>
+            <select id="requestMethod" aria-label="HTTP method filter">
+              <option value="">All methods</option>
+              <option value="GET">GET</option><option value="POST">POST</option>
+              <option value="PUT">PUT</option><option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option><option value="HEAD">HEAD</option>
+              <option value="OPTIONS">OPTIONS</option><option value="OTHER">Other</option>
+            </select>
+          </div>
           <div id="requestList" class="request-list"><div class="empty-muted">Incoming requests will appear here.</div></div>
           <div id="requestDetail" class="request-detail"><div class="empty-muted">Select a request to inspect its details.</div></div>
         </aside>
