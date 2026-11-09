@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HookLoom — Ephemeral HTTP Lab</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div><span class="brandmark">◈</span><strong>HookLoom</strong> <span class="subtitle">Ephemeral HTTP lab</span></div>
+    <div class="privacy">Private administration · No database</div>
+  </header>
+  <main>
+    <section id="loginPane" class="card auth">
+      <p class="eyebrow">LOCAL ADMIN PANEL</p>
+      <h1>Unlock your request inspector</h1>
+      <p>Get your admin token from <code>~/.config/hookloom/admin.token</code> on the host. Never paste it into a CTF challenge.</p>
+      <label for="adminToken">Admin token</label>
+      <input type="password" id="adminToken" autocomplete="off" placeholder="Paste the private admin token">
+      <button id="unlock">Unlock dashboard</button>
+      <p class="small">The token stays in browser memory only and disappears on reload. The control panel is bound to loopback.</p>
+    </section>
+    <div id="workspace" class="hidden">
+      <div class="pageheading"><div><p class="eyebrow">AUTHORIZED CTF TESTING</p><h1>Temporary capture endpoints</h1><p>Create a short-lived request inbox or a programmable mock HTTP response. Data is held only in RAM.</p></div><button id="lock" class="ghost">Lock panel</button></div>
+      <section class="card creation">
+        <h2>New endpoint</h2>
+        <div class="creategrid">
+          <label>Name<input id="name" value="CTF challenge" maxlength="60"></label>
+          <label>Expires after<select id="ttl"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option></select></label>
+          <label>Max requests<select id="requestLimit"><option value="10">10</option><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+          <label>Max body<select id="bodyLimit"><option value="8">8 KiB</option><option value="32">32 KiB</option><option value="64" selected>64 KiB</option><option value="256">256 KiB</option></select></label>
+          <button id="create">+ Create endpoint</button>
+        </div>
+      </section>
+      <div class="layout">
+        <aside class="card sidebar"><div class="sectionhead"><h2>Endpoints</h2><button id="refresh" class="ghost compact">Refresh</button></div><div id="sessionList" class="sessionlist"><p class="muted">No endpoints yet.</p></div></aside>
+        <div id="sessionPane" class="card details"><p class="muted">Create an endpoint or select one from the list.</p></div>
+      </div>
+      <p id="notice" role="status" aria-live="polite"></p>
+    </div>
+  </main>
+</body>
+</html>
