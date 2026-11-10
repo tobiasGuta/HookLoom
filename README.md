@@ -2,7 +2,7 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.7` pre-deployment security hardening review (draft); **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.8` ingress hardening review (stacked draft PR); **not production-ready**. The v0.7 code is running as an isolated localhost-only staging service on the Azure ARM64 VM. A temporary HTTPS Funnel test was completed and the public route was disabled. These PR changes have not been deployed. Automated tests run on GitHub Actions.
 
 ## What it does
 
@@ -175,11 +175,11 @@ You should see `302` and `Location: /complete`. When the rule doesn't match, the
 - `-ingest` is loopback-only by default and **rejects non-loopback bindings** unless the operator explicitly opts in with `-allow-nonloopback-ingest`. For a remote CTF target, use an HTTPS reverse tunnel forwarding to **only the capture listener**. Never tunnel or reverse-proxy the admin listener. An opt-in alone does not make public exposure safe.
 - CTF callback URLs are **capability URLs**. Anyone possessing one can send data to it and consume its quota. Treat the URLs as sensitive while active and delete them when done.
 - All request data, including headers/cookies and bodies, is held **only in RAM**, subject to limits. Sessions are gone after application restart or expiration. No access logs containing request data are written by the app. Exports are downloaded locally; protect the downloaded files separately.
-- Go server timeouts and header-size limits mitigate basic resource abuse. v0.2 also admits at most **24 simultaneous in-flight capture requests** and **20 requests per second per endpoint**. A rate-limited callback receives `429` (with `Retry-After: 1`) without consuming its lifetime quota; when the concurrency cap is reached, the service returns `503` (with `Retry-After: 1`). These coarse limits are **not full DDoS protection**. This is a **personal prototype**, not a hardened multi-user Internet service. Do not expose the capture listener directly to the Internet without external rate limiting and abuse controls.
+- Go server timeouts and header-size limits mitigate basic resource abuse. Capture admits at most **24 simultaneous in-flight requests** and **20 requests per second per endpoint**. v0.8 adds a **40 requests/second ingress-wide fixed-window budget**, including requests to unknown tokens and non-capture paths, plus a **4096-byte request-target limit** (raw path and query). Excess requests return `429` with `Retry-After: 1` and do not consume endpoint quotas; concurrency pressure returns `503`, and overlong request targets return `414`. The global limit is deliberately fixed-memory, but traffic to random URLs can still exhaust it and starve valid callbacks. These app-level controls **are not an edge firewall, fair per-client throttling, or DDoS protection**. Do not operate a long-lived public Funnel without accepting these residual risks and monitoring availability.
 - Admin configuration JSON is rejected above **128 KiB**, including trailing whitespace. Response header names and values reject forbidden control characters. The saved admin-token file must be a regular file with restrictive permissions (`0600`); symlinks and world-readable files are rejected. Custom `HOOKLOOM_ADMIN_TOKEN` values must contain **32–128 base64url characters** (`A–Z`, `a–z`, `0–9`, `_`, `-`).
 - Avoid capturing real credentials or unauthorized targets. This app is for systems you own or authorized CTF exercises.
 
-### Limits (v0.2)
+### Limits (v0.8 ingress review)
 
 | Setting | Default | Allowed |
 | --- | --- | --- |
