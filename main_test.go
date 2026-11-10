@@ -351,7 +351,8 @@ func TestStoredTokenRequiresPrivateRegularFile(t *testing.T) {
 func TestQueryValuesCountTowardBudget(t *testing.T) {
 	a := newTestApp()
 	s := makeSession(t, a, creationRequest{})
-	query := strings.Repeat("q", 9000)
+	// Stay below the v0.8 ingress target cap while exercising query accounting.
+	query := strings.Repeat("q", 3000)
 	rr := httptest.NewRecorder()
 	a.publicMux().ServeHTTP(rr, httptest.NewRequest("GET", "/c/"+s.Token+"/?k="+query, nil))
 	if rr.Code != 200 {
