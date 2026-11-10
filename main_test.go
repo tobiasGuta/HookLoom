@@ -506,6 +506,43 @@ func TestCaptureReferrerPolicy(t *testing.T) {
 	}
 }
 
+// A programmable response may specify its own headers, but cannot downgrade
+// the protections on token-bearing capture URLs, including redirects.
+func TestCaptureReferrerPolicyCannotBeOverridden(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{name: "success", status: http.StatusOK},
+		{name: "redirect", status: http.StatusFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp()
+			spec := responseSpec{
+				Status: tc.status,
+				Headers: map[string]string{
+					"Referrer-Policy": "unsafe-url",
+					"Cache-Control":   "public, max-age=3600",
+					"Location":        "https://example.org/",
+				},
+				Body: "test",
+			}
+			s := makeSession(t, a, creationRequest{Response: &spec})
+			rec := httptest.NewRecorder()
+			a.publicMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/c/"+s.Token, nil))
+			if rec.Code != tc.status {
+				t.Fatalf("response status = %d, want %d", rec.Code, tc.status)
+			}
+			if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+				t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", got)
+			}
+		})
+	}
+}
+
 func TestIngestBindingRequiresExplicitOptIn(t *testing.T) {
 	cases := []struct {
 		addr    string
