@@ -563,6 +563,22 @@ func TestOversizedCaptureRequestTargetRejected(t *testing.T) {
 	if stored.Seen != 0 {
 		t.Fatalf("rejected URL consumed capture quota: %d", stored.Seen)
 	}
+	// Verify the exact boundary so normal long callback queries still work.
+	prefix := "/c/" + s.Token + "?q="
+	atLimit := prefix + strings.Repeat("x", maxPublicRequestTargetBytes-len(prefix))
+	if len(atLimit) != maxPublicRequestTargetBytes {
+		t.Fatalf("test target length = %d", len(atLimit))
+	}
+	boundary := httptest.NewRecorder()
+	handler.ServeHTTP(boundary, httptest.NewRequest(http.MethodGet, atLimit, nil))
+	if boundary.Code != http.StatusOK {
+		t.Fatalf("target at byte limit rejected: %d", boundary.Code)
+	}
+	aboveLimit := httptest.NewRecorder()
+	handler.ServeHTTP(aboveLimit, httptest.NewRequest(http.MethodGet, atLimit+"x", nil))
+	if aboveLimit.Code != http.StatusRequestURITooLong {
+		t.Fatalf("target one byte over limit: %d", aboveLimit.Code)
+	}
 	short := httptest.NewRecorder()
 	handler.ServeHTTP(short, httptest.NewRequest(http.MethodGet, "/c/"+s.Token, nil))
 	if short.Code != http.StatusOK {
