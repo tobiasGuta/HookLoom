@@ -455,6 +455,9 @@ func (a *app) receive(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Capability paths must not leak via Referer, even if a mock response
+	// supplies a less restrictive Referrer-Policy header.
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(spec.Status)
 	if spec.Status != 204 && spec.Status != 304 && r.Method != http.MethodHead {
