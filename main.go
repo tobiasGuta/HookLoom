@@ -309,6 +309,10 @@ func (a *app) publicMux() http.Handler {
 	mux.HandleFunc("/c/", a.receive)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Capture URLs are bearer capabilities. Never leak their paths as browser Referers.
+		// This applies to redirects, custom HTML, invalid paths and rate-limit errors.
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
 		// Shed excess simultaneous requests rather than exhausting small VM resources.
 		select {
 		case a.captureSlots <- struct{}{}:
@@ -451,6 +455,9 @@ func (a *app) receive(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Capability paths must not leak via Referer, even if a mock response
+	// supplies a less restrictive Referrer-Policy header.
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(spec.Status)
 	if spec.Status != 204 && spec.Status != 304 && r.Method != http.MethodHead {
@@ -769,6 +776,19 @@ func isLoopbackAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// require an explicit operator opt-in before listening on public or host-wide
+// interfaces. HTTPS reverse proxies should forward only to a loopback listener.
+func validateIngestBind(addr string, allowNonLoopback bool) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return errors.New("invalid -ingest: expected host:port")
+	}
+	if !isLoopbackAddr(addr) && !allowNonLoopback {
+		return errors.New("refusing non-loopback capture listener; use a reverse proxy into 127.0.0.1 or explicitly set -allow-nonloopback-ingest")
+	}
+	return nil
+}
+
 var adminTokenRE = regexp.MustCompile(`^[A-Za-z0-9_-]{32,128}$`)
 
 func loadAdminToken() (string, string, error) {
@@ -821,15 +841,19 @@ func loadAdminToken() (string, string, error) {
 	return token, path, nil
 }
 func main() {
-	ingest := flag.String("ingest", "127.0.0.1:8765", "HTTP capture listen address (use a tunnel for HTTPS)")
+	ingest := flag.String("ingest", "127.0.0.1:8765", "HTTP capture listen address (loopback by default; use a reverse proxy for HTTPS)")
+	allowNonLoopbackIngest := flag.Bool("allow-nonloopback-ingest", false, "explicitly allow binding capture traffic to non-loopback addresses (requires separate security review)")
 	admin := flag.String("admin", "127.0.0.1:8766", "Private dashboard listen address (loopback only)")
 	publicBase := flag.String("public-base", "http://127.0.0.1:8765", "Public capture base URL shown in dashboard")
 	flag.Parse()
 	if !isLoopbackAddr(*admin) {
 		log.Fatal("Refusing to expose admin listener: -admin must use a loopback address")
 	}
-	if _, _, err := net.SplitHostPort(*ingest); err != nil {
-		log.Fatal("Invalid -ingest: ", err)
+	if err := validateIngestBind(*ingest, *allowNonLoopbackIngest); err != nil {
+		log.Fatal(err)
+	}
+	if !isLoopbackAddr(*ingest) {
+		log.Print("WARNING: non-loopback capture interface enabled. Add independent firewall and edge abuse protection before accepting Internet traffic.")
 	}
 	if !validCaptureBase(*publicBase) {
 		log.Fatal("-public-base must be a complete http(s) URL without a path, query, fragment or credentials")

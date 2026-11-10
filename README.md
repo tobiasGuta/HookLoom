@@ -2,7 +2,7 @@
 
 A small, **ephemeral HTTP request catcher and programmable response mocker** for authorized CTF challenges. Unlike a full Webhook.site installation, HookLoom has **no database, no Redis, no Node dependencies**, and no permanent capture storage. Built with the Go standard library for Fedora development and a future ARM64 Ubuntu/Azure deployment.
 
-**Status:** `v0.6` rule-conflict warnings review; **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
+**Status:** `v0.7` pre-deployment security hardening review (draft); **local testing first**. Automated tests run in GitHub Actions on pushes and pull requests. It has not been deployed to the existing Azure Interactsh VM.
 
 ## What it does
 
@@ -92,7 +92,7 @@ in-memory endpoints and request history.
 
 ## Quick start on Fedora
 
-Requires **Go 1.23+**. If you don't have it:
+Requires a **security-supported Go toolchain (currently 1.26.x or 1.27.x)**; `go.mod` retains 1.23 as the minimum language compatibility target. If you don't have it:
 
 ```bash
 sudo dnf install golang
@@ -172,7 +172,7 @@ You should see `302` and `Location: /complete`. When the rule doesn't match, the
 **Management and capture are two separate HTTP servers:**
 
 - `-admin` **must** bind to a numeric loopback address (for example `127.0.0.1:8766`); the program refuses public admin addresses and hostname-based listener configuration. The admin server rejects unexpected HTTP `Host` values to mitigate DNS rebinding. The administration API requires a separate, persistent random **Bearer token**. The browser holds it only in memory. Admin responses use no-store, restrictive browser headers and a Content Security Policy. Captured HTML is shown as text, never injected into the dashboard as HTML.
-- `-ingest` is loopback by default. For a remote CTF target, use an HTTPS reverse tunnel forwarding to **only the capture listener**. Never tunnel or reverse-proxy the admin listener.
+- `-ingest` is loopback-only by default and **rejects non-loopback bindings** unless the operator explicitly opts in with `-allow-nonloopback-ingest`. For a remote CTF target, use an HTTPS reverse tunnel forwarding to **only the capture listener**. Never tunnel or reverse-proxy the admin listener. An opt-in alone does not make public exposure safe.
 - CTF callback URLs are **capability URLs**. Anyone possessing one can send data to it and consume its quota. Treat the URLs as sensitive while active and delete them when done.
 - All request data, including headers/cookies and bodies, is held **only in RAM**, subject to limits. Sessions are gone after application restart or expiration. No access logs containing request data are written by the app. Exports are downloaded locally; protect the downloaded files separately.
 - Go server timeouts and header-size limits mitigate basic resource abuse. v0.2 also admits at most **24 simultaneous in-flight capture requests** and **20 requests per second per endpoint**. A rate-limited callback receives `429` (with `Retry-After: 1`) without consuming its lifetime quota; when the concurrency cap is reached, the service returns `503` (with `Retry-After: 1`). These coarse limits are **not full DDoS protection**. This is a **personal prototype**, not a hardened multi-user Internet service. Do not expose the capture listener directly to the Internet without external rate limiting and abuse controls.
