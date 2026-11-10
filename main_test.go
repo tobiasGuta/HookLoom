@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -350,7 +351,8 @@ func TestStoredTokenRequiresPrivateRegularFile(t *testing.T) {
 func TestQueryValuesCountTowardBudget(t *testing.T) {
 	a := newTestApp()
 	s := makeSession(t, a, creationRequest{})
-	query := strings.Repeat("q", 9000)
+	// Stay below the v0.8 ingress target cap while exercising query accounting.
+	query := strings.Repeat("q", 3000)
 	rr := httptest.NewRecorder()
 	a.publicMux().ServeHTTP(rr, httptest.NewRequest("GET", "/c/"+s.Token+"/?k="+query, nil))
 	if rr.Code != 200 {
@@ -486,6 +488,127 @@ func TestRuleConflictAnalyzerAsset(t *testing.T) {
 	a.adminMux().ServeHTTP(bad, req)
 	if bad.Code != http.StatusForbidden {
 		t.Fatalf("unexpected Host accepted: %d", bad.Code)
+	}
+}
+
+// Unknown paths and known tokens share one ingress budget. Rejections must
+// not consume endpoint request quotas or affect the private management API.
+func TestGlobalIngressLimitCoversUnknownAndKnownPaths(t *testing.T) {
+	a := newTestApp()
+	now := time.Date(2026, 11, 9, 20, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	s := makeSession(t, a, creationRequest{MaxRequests: 100})
+	handler := a.publicMux()
+
+	for i := 0; i < maxGlobalRequestsPerSecond-1; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/unknown-"+strings.Repeat("x", 8), nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("unknown request %d: status %d, want 404", i, rec.Code)
+		}
+	}
+	allowed := httptest.NewRecorder()
+	handler.ServeHTTP(allowed, httptest.NewRequest(http.MethodGet, "/c/"+s.Token, nil))
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("last allowed request: status %d", allowed.Code)
+	}
+	blocked := httptest.NewRecorder()
+	handler.ServeHTTP(blocked, httptest.NewRequest(http.MethodPost, "/c/"+s.Token, nil))
+	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("Retry-After") != "1" {
+		t.Fatalf("ingress overflow: status %d, Retry-After %q", blocked.Code, blocked.Header().Get("Retry-After"))
+	}
+	if got := blocked.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Errorf("blocked Referrer-Policy = %q", got)
+	}
+	if got := blocked.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("blocked Cache-Control = %q", got)
+	}
+	inspect := runAdmin(t, a, http.MethodGet, "/api/endpoints/"+s.Token, nil)
+	if inspect.Code != http.StatusOK {
+		t.Fatalf("private admin rejected by ingest limiter: %d", inspect.Code)
+	}
+	var stored session
+	if err := json.Unmarshal(inspect.Body.Bytes(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Seen != 1 {
+		t.Fatalf("globally rejected request consumed endpoint quota: seen=%d", stored.Seen)
+	}
+	now = now.Add(time.Second)
+	recovered := httptest.NewRecorder()
+	handler.ServeHTTP(recovered, httptest.NewRequest(http.MethodGet, "/c/"+s.Token, nil))
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("new rate window: status %d", recovered.Code)
+	}
+}
+
+func TestOversizedCaptureRequestTargetRejected(t *testing.T) {
+	a := newTestApp()
+	s := makeSession(t, a, creationRequest{})
+	handler := a.publicMux()
+	longTarget := "/c/" + s.Token + "?q=" + strings.Repeat("x", maxPublicRequestTargetBytes)
+	r := httptest.NewRecorder()
+	handler.ServeHTTP(r, httptest.NewRequest(http.MethodGet, longTarget, nil))
+	if r.Code != http.StatusRequestURITooLong {
+		t.Fatalf("long URL: status %d, want 414", r.Code)
+	}
+	if r.Header().Get("Referrer-Policy") != "no-referrer" || r.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("long URL response missing privacy headers")
+	}
+	inspection := runAdmin(t, a, http.MethodGet, "/api/endpoints/"+s.Token, nil)
+	var stored session
+	if err := json.Unmarshal(inspection.Body.Bytes(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Seen != 0 {
+		t.Fatalf("rejected URL consumed capture quota: %d", stored.Seen)
+	}
+	// Verify the exact boundary so normal long callback queries still work.
+	prefix := "/c/" + s.Token + "?q="
+	atLimit := prefix + strings.Repeat("x", maxPublicRequestTargetBytes-len(prefix))
+	if len(atLimit) != maxPublicRequestTargetBytes {
+		t.Fatalf("test target length = %d", len(atLimit))
+	}
+	boundary := httptest.NewRecorder()
+	handler.ServeHTTP(boundary, httptest.NewRequest(http.MethodGet, atLimit, nil))
+	if boundary.Code != http.StatusOK {
+		t.Fatalf("target at byte limit rejected: %d", boundary.Code)
+	}
+	aboveLimit := httptest.NewRecorder()
+	handler.ServeHTTP(aboveLimit, httptest.NewRequest(http.MethodGet, atLimit+"x", nil))
+	if aboveLimit.Code != http.StatusRequestURITooLong {
+		t.Fatalf("target one byte over limit: %d", aboveLimit.Code)
+	}
+	short := httptest.NewRecorder()
+	handler.ServeHTTP(short, httptest.NewRequest(http.MethodGet, "/c/"+s.Token, nil))
+	if short.Code != http.StatusOK {
+		t.Fatalf("normal request not admitted: %d", short.Code)
+	}
+}
+
+func TestGlobalIngressLimiterConcurrent(t *testing.T) {
+	a := newTestApp()
+	fixed := time.Date(2026, 11, 9, 20, 0, 0, 0, time.UTC)
+	const attempts = 100
+	var wg sync.WaitGroup
+	results := make(chan bool, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- a.allowGlobalRate(fixed)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	admitted := 0
+	for allowed := range results {
+		if allowed {
+			admitted++
+		}
+	}
+	if admitted != maxGlobalRequestsPerSecond {
+		t.Fatalf("concurrent admissions = %d, want %d", admitted, maxGlobalRequestsPerSecond)
 	}
 }
 

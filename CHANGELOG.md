@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8 — Ingress-wide admission guardrails (draft, stacked on v0.7)
+
+- Limit all public capture-listener traffic to 40 requests per fixed one-second
+  window, including non-capture paths and unknown/expired token URLs, with a
+  bounded three-field limiter and a separate mutex from session storage.
+- Reject raw request targets longer than 4096 bytes with HTTP 414 before
+  parsing/capture; rate overflow returns HTTP 429 and `Retry-After: 1`.
+- Preserve HTTP privacy headers on rejects, existing 20 req/s per-endpoint
+  quotas, the 24-request concurrency cap, and admin authentication isolation.
+- Add tests for mixed unknown/valid traffic, quota preservation, limiter
+  concurrency, one-second recovery, and oversized targets.
+- These are application safeguards **not** per-client fairness, edge WAF, or
+  volumetric DDoS protection. No Azure, DNS, Tailscale, or Interactsh changes.
+
 ## v0.7 — Pre-deployment security hardening (review)
 
 - Use a security-supported Go **1.27.3** toolchain in CI, while retaining

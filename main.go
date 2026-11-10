@@ -34,16 +34,18 @@ import (
 var uiFiles embed.FS
 
 const (
-	defaultTTL            = 30
-	defaultMaxRequests    = 50
-	defaultBodyLimitKiB   = 64
-	maxSessions           = 8
-	maxRules              = 12
-	maxGlobalBytes        = 8 << 20
-	maxAdminJSONBytes     = 128 << 10
-	maxResponseBytes      = 64 << 10
-	maxConcurrentCaptures = 24
-	maxRequestsPerSecond  = 20
+	defaultTTL                  = 30
+	defaultMaxRequests          = 50
+	defaultBodyLimitKiB         = 64
+	maxSessions                 = 8
+	maxRules                    = 12
+	maxGlobalBytes              = 8 << 20
+	maxAdminJSONBytes           = 128 << 10
+	maxResponseBytes            = 64 << 10
+	maxConcurrentCaptures       = 24
+	maxRequestsPerSecond        = 20
+	maxGlobalRequestsPerSecond  = 40
+	maxPublicRequestTargetBytes = 4096
 )
 
 var headerKeyRE = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -125,6 +127,10 @@ type app struct {
 	adminToken   string
 	usedBytes    int
 	captureSlots chan struct{}
+	// Separate lock avoids coupling anonymous ingress floods to session state.
+	ingestMu     sync.Mutex
+	ingestWindow time.Time
+	ingestHits   int
 	now          func() time.Time
 }
 
@@ -304,6 +310,23 @@ func (a *app) insertLocked(s *session, c capture) {
 	}
 }
 
+// The single, fixed-memory ingress-wide limiter includes unknown capture tokens,
+// invalid paths, and active endpoints. Never key on X-Forwarded-For: behind a
+// tunnel the peer address may be shared or attacker-controlled.
+func (a *app) allowGlobalRate(now time.Time) bool {
+	a.ingestMu.Lock()
+	defer a.ingestMu.Unlock()
+	if a.ingestWindow.IsZero() || now.Before(a.ingestWindow) || now.Sub(a.ingestWindow) >= time.Second {
+		a.ingestWindow = now
+		a.ingestHits = 0
+	}
+	if a.ingestHits >= maxGlobalRequestsPerSecond {
+		return false
+	}
+	a.ingestHits++
+	return true
+}
+
 func (a *app) publicMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/c/", a.receive)
@@ -313,6 +336,22 @@ func (a *app) publicMux() http.Handler {
 		// This applies to redirects, custom HTML, invalid paths and rate-limit errors.
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
+		// Reject excessive request rates before session lookup, even for unknown URLs.
+		if !a.allowGlobalRate(a.now()) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "Capture server rate limit reached", http.StatusTooManyRequests)
+			return
+		}
+		// RequestURI is the raw request target on the HTTP server; prevent large
+		// paths/queries from being retained or repeatedly parsed.
+		target := r.RequestURI
+		if target == "" && r.URL != nil {
+			target = r.URL.RequestURI()
+		}
+		if len(target) > maxPublicRequestTargetBytes {
+			http.Error(w, "Request target too long", http.StatusRequestURITooLong)
+			return
+		}
 		// Shed excess simultaneous requests rather than exhausting small VM resources.
 		select {
 		case a.captureSlots <- struct{}{}:

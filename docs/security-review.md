@@ -31,6 +31,15 @@ review. Captures are RAM-only; JSON exports are not, and must be protected.
   at most 256 KiB per captured body; ~8 MiB retained capture accounting.
 - HTTP timeouts, maximum header sizes, up to 24 concurrent in-flight capture
   requests and 20 requests/second per **known endpoint**.
+- v0.8 additionally limits **all** incoming requests on the capture listener
+  (including unknown endpoints and invalid paths) to 40 per fixed one-second
+  window. Raw request targets above 4096 bytes return 414; accepted-rate
+  overflow returns 429 with Retry-After 1. The limiter uses constant-size
+  in-memory state and a separate lock from endpoint/session accounting.
+- The global rate budget is **shared** by legitimate and malicious traffic,
+  with no per-client fairness; an adversary can intentionally exhaust it,
+  especially behind a shared reverse-tunnel address. These controls mitigate
+  normal application abuse, **not** network-layer or volumetric attacks.
 - Custom response headers reject prohibited hop-by-hop headers and control
   characters. User-defined HTML responses are intentional **mock behavior**.
 - Default capture listener is on loopback. In v0.7, public/interface-wide
