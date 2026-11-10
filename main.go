@@ -34,18 +34,18 @@ import (
 var uiFiles embed.FS
 
 const (
-	defaultTTL            = 30
-	defaultMaxRequests    = 50
-	defaultBodyLimitKiB   = 64
-	maxSessions           = 8
-	maxRules              = 12
-	maxGlobalBytes        = 8 << 20
-	maxAdminJSONBytes     = 128 << 10
-	maxResponseBytes      = 64 << 10
-	maxConcurrentCaptures        = 24
-	maxRequestsPerSecond         = 20
-	maxGlobalRequestsPerSecond   = 40
-	maxPublicRequestTargetBytes  = 4096
+	defaultTTL                  = 30
+	defaultMaxRequests          = 50
+	defaultBodyLimitKiB         = 64
+	maxSessions                 = 8
+	maxRules                    = 12
+	maxGlobalBytes              = 8 << 20
+	maxAdminJSONBytes           = 128 << 10
+	maxResponseBytes            = 64 << 10
+	maxConcurrentCaptures       = 24
+	maxRequestsPerSecond        = 20
+	maxGlobalRequestsPerSecond  = 40
+	maxPublicRequestTargetBytes = 4096
 )
 
 var headerKeyRE = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
